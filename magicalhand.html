@@ -24,7 +24,7 @@
             overflow: hidden;
             background-color: #000;
             font-family: 'Inter', sans-serif;
-            touch-action: none;
+            touch-action: none; /* Prevent pull-to-refresh on mobile */
         }
 
         /* Container for overlapping video and canvas */
@@ -56,11 +56,6 @@
             height: 100%;
             z-index: 2;
             pointer-events: none; /* Let clicks pass through to UI */
-        }
-        
-        /* Floating Controls */
-        #controls-panel {
-            z-index: 10;
         }
 
         /* Loading Overlay */
@@ -113,8 +108,8 @@
         <!-- Canvas for Three.js rendering -->
         <canvas id="three-canvas"></canvas>
         
-        <!-- Mobile Friendly Floating UI Controls -->
-        <div id="controls-container" class="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-end justify-center gap-4 z-10 pointer-events-auto">
+        <!-- Mobile Friendly Floating UI Controls (Left Aligned, Higher up) -->
+        <div id="controls-container" class="fixed bottom-48 left-6 flex items-end gap-6 z-10 pointer-events-auto">
             
             <!-- Size Control -->
             <div class="flex flex-col items-center gap-3">
@@ -209,6 +204,7 @@
             canvas.height = 64;
             const ctx = canvas.getContext('2d');
             const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            // Core is bright white, fading out to the particle's assigned color via Three.js blending
             gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
             gradient.addColorStop(0.2, 'rgba(255, 255, 255, 0.8)');
             gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
@@ -228,7 +224,7 @@
             { name: 'Pinky',  tip: 20, joint: 19, pip: 18, color: 0xff33ff }  // Magenta
         ];
 
-        // Base materials to clone from
+        // Base materials to clone from (improves performance over creating new materials blindly)
         const baseMaterials = {};
         FINGERS.forEach(finger => {
             baseMaterials[finger.color] = new THREE.SpriteMaterial({ 
@@ -243,13 +239,13 @@
 
         // Spawn a star
         function spawnStar(x, y, dirX, dirY, colorHex, baseSize) {
-            // Clone material to independently animate opacity
+            // Clone material to independently animate opacity per particle
             const material = baseMaterials[colorHex].clone();
             const star = new THREE.Sprite(material);
             
             star.position.set(x, y, 0);
             
-            // Initial scale base on the 'サイズ' slider
+            // Initial scale base on the 'サイズ' slider with slight randomness
             const initialScale = (Math.random() * 0.5 + 0.5) * (baseSize * 25);
             star.scale.set(initialScale, initialScale, 1);
 
@@ -258,7 +254,7 @@
             const nx = length > 0 ? dirX / length : 0;
             const ny = length > 0 ? dirY / length : 0;
 
-            // Speed of the particle
+            // Speed of the particle emission
             const speed = Math.random() * 0.15 + 0.05;
 
             // Add slight random spread to form a cone matching the finger direction
@@ -266,14 +262,14 @@
             const cosA = Math.cos(spreadAngle);
             const sinA = Math.sin(spreadAngle);
             
-            // Initial directional velocity based on finger joint -> fingertip
+            // Final directional velocity based on finger joint -> fingertip + spread
             const finalDx = (nx * cosA - ny * sinA) * speed;
             const finalDy = (nx * sinA + ny * cosA) * speed;
 
             star.userData = {
                 velocity: new THREE.Vector3(finalDx, finalDy, 0),
                 baseScale: initialScale,
-                life: 1.0, // Lifespan from 1.0 to 0.0
+                life: 1.0, // Lifespan from 1.0 down to 0.0
                 decay: Math.random() * 0.015 + 0.01, // Speed of fading
                 sparkleOffset: Math.random() * Math.PI * 2, // Random offset for sparkling sine wave
                 sparkleSpeed: Math.random() * 5 + 10 // Speed of the sparkle oscillation
@@ -294,9 +290,8 @@
                 const p = particles[i];
                 
                 // 1. Apply Gravity to the Y velocity
-                // In Three.js, positive Y is UP. If gravity is positive, we want it to fall DOWN (subtract).
-                // If gravity is negative, we subtract a negative, pulling it UP.
-                p.userData.velocity.y -= gravity * 0.1; // *0.1 to soften per-frame impact
+                // In Three.js, positive Y is UP. Positive gravity pulls DOWN (subtraction).
+                p.userData.velocity.y -= gravity * 0.1; // Multiplier to soften per-frame impact
 
                 // Update Position
                 p.position.add(p.userData.velocity);
@@ -309,7 +304,7 @@
                 const baseOpacity = Math.max(0, p.userData.life);
                 // Sparkle sine wave creates a pulsing opacity multiplier
                 const sparklePhase = time * p.userData.sparkleSpeed + p.userData.sparkleOffset;
-                const sparkleMultiplier = 0.5 + 0.5 * Math.sin(sparklePhase); // Flutuates between 0 and 1
+                const sparkleMultiplier = 0.5 + 0.5 * Math.sin(sparklePhase); // Fluctuates between 0 and 1
                 
                 // Final opacity combined
                 p.material.opacity = baseOpacity * (0.4 + 0.6 * sparkleMultiplier);
@@ -349,6 +344,7 @@
                 const tip = landmarks[f.tip];
                 const pip = landmarks[f.pip];
 
+                // Simple check: is fingertip further from wrist than the middle joint?
                 const distTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y, tip.z - wrist.z);
                 const distPip = Math.hypot(pip.x - wrist.x, pip.y - wrist.y, pip.z - wrist.z);
 
@@ -356,6 +352,7 @@
                     extendedFingers++;
                 }
             }
+            // Require at least 4 fingers extended to consider the hand "open"
             return extendedFingers >= 4;
         }
 
@@ -382,7 +379,7 @@
             const ndcX = (px / wW) * 2 - 1;
             const ndcY = -(py / wH) * 2 + 1;
 
-            // World coords at Z=0
+            // World coords at Z=0 based on camera projection
             const vFov = camera.fov * Math.PI / 180;
             const visibleHeight = 2 * Math.tan(vFov / 2) * camera.position.z;
             const visibleWidth = visibleHeight * camera.aspect;
@@ -422,14 +419,13 @@
                         // Process each finger
                         for (let f of FINGERS) {
                             const tip = landmarks[f.tip];
-                            const joint = landmarks[f.joint];
+                            const joint = landmarks[f.joint]; // DIP joint (or PIP for thumb)
                             
                             const tipW = mapTo3DWorld(tip.x, tip.y);
                             const jointW = mapTo3DWorld(joint.x, joint.y);
                             
                             // Vector from joint to tip determines emission direction
-                            // Note: Y axis in MediaPipe is top-down, but mapTo3DWorld handles standard 3D mapping.
-                            // We can use the calculated 3D coordinates to get an accurate 3D vector.
+                            // Note: mapTo3DWorld handles standard 3D mapping where +Y is up.
                             const dirX = tipW.x - jointW.x;
                             const dirY = tipW.y - jointW.y;
 
