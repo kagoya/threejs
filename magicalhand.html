@@ -93,6 +93,16 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Vertical Slider Styles for Mobile */
+        input[type=range][orient=vertical] {
+            appearance: slider-vertical;
+            -webkit-appearance: slider-vertical;
+            width: 12px;
+            height: 150px;
+            cursor: pointer;
+            background: transparent;
+        }
     </style>
 </head>
 <body>
@@ -103,35 +113,36 @@
         <!-- Canvas for Three.js rendering -->
         <canvas id="three-canvas"></canvas>
         
-        <!-- UI Controls Panel -->
-        <div id="controls-panel" class="absolute bottom-0 left-0 w-full bg-black/40 backdrop-blur-md px-4 py-3 border-t border-white/20 text-white pointer-events-auto flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8 z-10">
-            <div class="flex items-center gap-1 font-bold text-yellow-300 text-sm whitespace-nowrap">
-                <span>✨</span> 魔法の設定
-            </div>
+        <!-- Mobile Friendly Floating UI Controls -->
+        <div id="controls-container" class="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-end justify-center gap-4 z-10 pointer-events-auto">
             
-            <!-- Size Slider -->
-            <div class="w-full max-w-[200px]">
-                <label for="size-slider" class="block text-xs font-medium text-gray-300 mb-1 flex justify-between">
-                    サイズ (Size) <span id="size-val" class="text-yellow-400">0.05</span>
-                </label>
-                <input type="range" id="size-slider" min="0.01" max="0.2" step="0.01" value="0.05" class="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-yellow-400">
+            <!-- Size Control -->
+            <div class="flex flex-col items-center gap-3">
+                <div id="size-panel" class="hidden bg-black/60 backdrop-blur-md p-4 rounded-2xl border border-white/20 flex-col items-center shadow-xl">
+                    <div id="size-val" class="text-yellow-400 text-sm font-bold mb-3">0.05</div>
+                    <input type="range" orient="vertical" id="size-slider" min="0.01" max="0.2" step="0.01" value="0.05" class="accent-yellow-400">
+                </div>
+                <button onclick="togglePanel('size-panel')" class="bg-black/60 backdrop-blur-md px-4 py-3 rounded-full border border-white/20 text-white text-sm font-bold shadow-lg whitespace-nowrap active:scale-95 transition-transform hover:bg-black/80">サイズ</button>
             </div>
 
-            <!-- Quantity Slider -->
-            <div class="w-full max-w-[200px]">
-                <label for="qty-slider" class="block text-xs font-medium text-gray-300 mb-1 flex justify-between">
-                    量 (Quantity) <span id="qty-val" class="text-yellow-400">3</span>
-                </label>
-                <input type="range" id="qty-slider" min="1" max="15" step="1" value="3" class="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-yellow-400">
+            <!-- Quantity Control -->
+            <div class="flex flex-col items-center gap-3">
+                <div id="qty-panel" class="hidden bg-black/60 backdrop-blur-md p-4 rounded-2xl border border-white/20 flex-col items-center shadow-xl">
+                    <div id="qty-val" class="text-yellow-400 text-sm font-bold mb-3">3</div>
+                    <input type="range" orient="vertical" id="qty-slider" min="1" max="15" step="1" value="3" class="accent-yellow-400">
+                </div>
+                <button onclick="togglePanel('qty-panel')" class="bg-black/60 backdrop-blur-md px-4 py-3 rounded-full border border-white/20 text-white text-sm font-bold shadow-lg whitespace-nowrap active:scale-95 transition-transform hover:bg-black/80">量</button>
             </div>
 
-            <!-- Gravity Slider -->
-            <div class="w-full max-w-[200px]">
-                <label for="gravity-slider" class="block text-xs font-medium text-gray-300 mb-1 flex justify-between">
-                    重力 (Gravity) <span id="gravity-val" class="text-yellow-400">0.005</span>
-                </label>
-                <input type="range" id="gravity-slider" min="-0.02" max="0.02" step="0.001" value="0.005" class="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-yellow-400">
+            <!-- Gravity Control -->
+            <div class="flex flex-col items-center gap-3">
+                <div id="gravity-panel" class="hidden bg-black/60 backdrop-blur-md p-4 rounded-2xl border border-white/20 flex-col items-center shadow-xl">
+                    <div id="gravity-val" class="text-yellow-400 text-sm font-bold mb-3">0.005</div>
+                    <input type="range" orient="vertical" id="gravity-slider" min="-0.02" max="0.02" step="0.001" value="0.005" class="accent-yellow-400">
+                </div>
+                <button onclick="togglePanel('gravity-panel')" class="bg-black/60 backdrop-blur-md px-4 py-3 rounded-full border border-white/20 text-white text-sm font-bold shadow-lg whitespace-nowrap active:scale-95 transition-transform hover:bg-black/80">重力</button>
             </div>
+
         </div>
 
         <!-- Loading UI -->
@@ -146,6 +157,18 @@
 
     <script>
         // --- UI Logic ---
+        function togglePanel(panelId) {
+            const panel = document.getElementById(panelId);
+            // Toggle between Tailwind's 'hidden' and 'flex'
+            if (panel.classList.contains('hidden')) {
+                panel.classList.remove('hidden');
+                panel.classList.add('flex');
+            } else {
+                panel.classList.add('hidden');
+                panel.classList.remove('flex');
+            }
+        }
+
         const sizeSlider = document.getElementById('size-slider');
         const qtySlider = document.getElementById('qty-slider');
         const gravitySlider = document.getElementById('gravity-slider');
