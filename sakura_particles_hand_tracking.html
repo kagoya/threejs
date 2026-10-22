@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sakura Particles & Hand Tracking</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #fce4ec; /* 優しい桜色のフォールバック */
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+        }
+
+        /* Webカメラの映像 (全画面＆左右反転) */
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: -2;
+            transform: scaleX(-1);
+        }
+
+        /* 3Dキャンバス (オーバーレイ) */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        /* UIとメッセージ */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding-top: 30px;
+        }
+
+        #instruction {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(4px);
+            padding: 10px 20px;
+            border-radius: 20px;
+            color: #d81b60;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            transition: opacity 0.5s ease;
+        }
+
+        .sub-text {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 4px;
+            font-weight: normal;
+        }
+
+        /* ローディング画面 */
+        #loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.9);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.8s ease;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f8bbd0;
+            border-top: 4px solid #d81b60;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #loading-text {
+            color: #d81b60;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+    </style>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <video id="webcam" autoplay playsinline muted></video>
+    
+    <div id="canvas-container"></div>
+    
+    <div id="ui-layer">
+        <div id="instruction">
+            手を振る、またはドラッグして風を起こす🌸
+            <div class="sub-text" id="status-text">カメラ映像とAIを同期中...</div>
+        </div>
+    </div>
+
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <div id="loading-text">AIとカメラを準備しています...</div>
+        <div class="sub-text" style="margin-top: 10px;">カメラへのアクセスを許可してください</div>
+    </div>
+
+    <script>
+        // --- 変数定義 ---
+        let scene, camera, renderer;
+        let instancedMesh;
+        let handIndicator; // 手の位置を示す視覚的フィードバック
+
+        const particleCount = 2000; 
+        const dummy = new THREE.Object3D();
+        const positions = new Float32Array(particleCount * 3);
+        const velocities = new Float32Array(particleCount * 3);
+        const baseVelocities = new Float32Array(particleCount * 3);
+        const rotations = new Float32Array(particleCount * 3);
+        const rotVelocities = new Float32Array(particleCount * 3);
+        const phases = new Float32Array(particleCount);
+
+        // マウス操作用
+        let isDragging = false;
+        let prevPointer3D = new THREE.Vector3();
+
+        // 手のトラッキング用
+        let prevHand3D = null;
+        let isAiReady = false;
+        let targetHandPos = new THREE.Vector3(0, -100, 0); // 初期位置は画面外
+
+        // --- 初期化 ---
+        initThreeJS();
+        initMediaPipe();
+        animate();
+
+        // --- Three.js のセットアップ ---
+        function initThreeJS() {
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 25;
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // 桜の花びらのジオメトリ
+            const x = 0, y = 0;
+            const heartShape = new THREE.Shape();
+            heartShape.moveTo( x + 0.25, y + 0.25 );
+            heartShape.bezierCurveTo( x + 0.25, y + 0.25, x + 0.2, y, x, y );
+            heartShape.bezierCurveTo( x - 0.3, y, x - 0.3, y + 0.35, x - 0.3, y + 0.35 );
+            heartShape.bezierCurveTo( x - 0.3, y + 0.55, x - 0.1, y + 0.77, x + 0.25, y + 0.95 );
+            heartShape.bezierCurveTo( x + 0.6, y + 0.77, x + 0.8, y + 0.55, x + 0.8, y + 0.35 );
+            heartShape.bezierCurveTo( x + 0.8, y + 0.35, x + 0.8, y, x + 0.5, y );
+            heartShape.bezierCurveTo( x + 0.35, y, x + 0.25, y + 0.25, x + 0.25, y + 0.25 );
+
+            const geometry = new THREE.ShapeGeometry(heartShape);
+            geometry.scale(0.35, 0.35, 0.35);
+            geometry.center();
+
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0xffb7c5, 
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.85
+            });
+
+            instancedMesh = new THREE.InstancedMesh(geometry, material, particleCount);
+            
+            // 花びらの初期化
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3 + 0] = (Math.random() - 0.5) * 80;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 60 + 10;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 40 - 10;
+
+                velocities[i * 3 + 0] = (Math.random() - 0.5) * 0.02;
+                velocities[i * 3 + 1] = - (Math.random() * 0.06 + 0.03); 
+                velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.02;
+
+                baseVelocities[i * 3 + 0] = velocities[i * 3 + 0];
+                baseVelocities[i * 3 + 1] = velocities[i * 3 + 1];
+                baseVelocities[i * 3 + 2] = velocities[i * 3 + 2];
+
+                rotations[i * 3 + 0] = Math.random() * Math.PI * 2;
+                rotations[i * 3 + 1] = Math.random() * Math.PI * 2;
+                rotations[i * 3 + 2] = Math.random() * Math.PI * 2;
+
+                rotVelocities[i * 3 + 0] = (Math.random() - 0.5) * 0.05;
+                rotVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.05;
+                rotVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.05;
+
+                phases[i] = Math.random() * Math.PI * 2;
+
+                updateInstance(i);
+            }
+            
+            instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            scene.add(instancedMesh);
+
+            // 手の位置を示すインジケーター（淡い光る球体）
+            const indicatorGeo = new THREE.SphereGeometry(1.5, 16, 16);
+            const indicatorMat = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff, 
+                transparent: true, 
+                opacity: 0.1,
+                wireframe: true
+            });
+            handIndicator = new THREE.Mesh(indicatorGeo, indicatorMat);
+            scene.add(handIndicator);
+
+            // イベントリスナー
+            window.addEventListener('resize', onWindowResize, false);
+            
+            const canvas = renderer.domElement;
+            canvas.addEventListener('mousedown', (e) => { isDragging = true; prevPointer3D.copy(getScreen3D(e.clientX, e.clientY)); });
+            canvas.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', () => { isDragging = false; });
+            
+            canvas.addEventListener('touchstart', (e) => { isDragging = true; prevPointer3D.copy(getScreen3D(e.touches[0].clientX, e.touches[0].clientY)); });
+            canvas.addEventListener('touchmove', onTouchMove);
+            window.addEventListener('touchend', () => { isDragging = false; });
+        }
+
+        // --- MediaPipe のセットアップ ---
+        function initMediaPipe() {
+            const videoElement = document.getElementById('webcam');
+            
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1, // 1つの手を認識
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5,
+                selfieMode: true // 鏡合わせ（CSSのscaleX(-1)と座標を一致させる）
+            });
+            
+            hands.onResults(onHandResults);
+
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            
+            cameraUtils.start().catch(err => {
+                console.error("Camera error:", err);
+                document.getElementById('loading-text').innerText = "カメラの起動に失敗しました";
+                document.querySelector('.sub-text').innerText = "マウスやタッチ操作は引き続き利用可能です。";
+                setTimeout(hideLoading, 3000);
+            });
+        }
+
+        // AIが手の形を認識した時のコールバック
+        function onHandResults(results) {
+            if (!isAiReady) {
+                isAiReady = true;
+                hideLoading();
+                document.getElementById('status-text').innerText = "AI 認識中 (カメラ準備完了)";
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // 手のひらの中心付近（ランドマーク9: 中指の付け根）を使用
+                const landmark = results.multiHandLandmarks[0][9];
+                
+                // MediaPipeの正規化座標 (0~1) を画面ピクセル座標に変換
+                const clientX = landmark.x * window.innerWidth;
+                const clientY = landmark.y * window.innerHeight;
+                
+                // 3D空間の座標を取得
+                const currentHand3D = getScreen3D(clientX, clientY);
+                targetHandPos.copy(currentHand3D); // インジケーター追従用
+
+                if (prevHand3D) {
+                    const movementVector = currentHand3D.clone().sub(prevHand3D);
+                    
+                    // わずかなブレを無視（ノイズ除去）
+                    if (movementVector.length() > 0.5) {
+                        // AIのフレームレートは描画より低いため、少し強めに風を適用
+                        applyWindForce(currentHand3D, movementVector, 1.2, 16.0);
+                    }
+                } else {
+                    prevHand3D = new THREE.Vector3();
+                }
+                prevHand3D.copy(currentHand3D);
+                
+                // 手が見つかっている間はインジケーターを表示
+                handIndicator.visible = true;
+                
+            } else {
+                prevHand3D = null;
+                handIndicator.visible = false; // 手が見えない時は隠す
+            }
+        }
+
+        function hideLoading() {
+            const loader = document.getElementById('loading-screen');
+            loader.style.opacity = '0';
+            setTimeout(() => { loader.style.display = 'none'; }, 800);
+        }
+
+        // --- 共通の風・物理演算ロジック ---
+
+        // 画面の(x, y)から、カメラ奥(z=0付近)の3D座標を計算
+        function getScreen3D(clientX, clientY) {
+            const vec = new THREE.Vector3(
+                (clientX / window.innerWidth) * 2 - 1,
+                -(clientY / window.innerHeight) * 2 + 1,
+                0.5
+            );
+            vec.unproject(camera);
+            vec.sub(camera.position).normalize();
+            const distance = -camera.position.z / vec.z;
+            return camera.position.clone().add(vec.multiplyScalar(distance));
+        }
+
+        // マウス移動
+        function onMouseMove(event) {
+            if (!isDragging) return;
+            const current3D = getScreen3D(event.clientX, event.clientY);
+            const moveVec = current3D.clone().sub(prevPointer3D);
+            applyWindForce(current3D, moveVec, 0.8, 12.0); // マウスは小刻みに呼ばれるので力は通常
+            prevPointer3D.copy(current3D);
+        }
+
+        // タッチ移動
+        function onTouchMove(event) {
+            if (!isDragging) return;
+            const current3D = getScreen3D(event.touches[0].clientX, event.touches[0].clientY);
+            const moveVec = current3D.clone().sub(prevPointer3D);
+            applyWindForce(current3D, moveVec, 0.8, 12.0);
+            prevPointer3D.copy(current3D);
+        }
+
+        // 特定の位置(originPos)から、方向(vector)へ風の力を加える
+        function applyWindForce(originPos, vector, forceMultiplier, influenceRadius) {
+            for (let i = 0; i < particleCount; i++) {
+                const px = positions[i * 3 + 0];
+                const py = positions[i * 3 + 1];
+                const pz = positions[i * 3 + 2];
+
+                const dx = px - originPos.x;
+                const dy = py - originPos.y;
+                const dz = pz - originPos.z;
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                const radiusSq = influenceRadius * influenceRadius;
+
+                if (distSq < radiusSq) {
+                    const dist = Math.sqrt(distSq);
+                    // 中心に近いほど強い力 (0.0 〜 1.0)
+                    const effect = 1.0 - (dist / influenceRadius); 
+
+                    velocities[i * 3 + 0] += vector.x * forceMultiplier * effect;
+                    velocities[i * 3 + 1] += vector.y * forceMultiplier * effect;
+                    velocities[i * 3 + 2] += vector.z * forceMultiplier * effect;
+
+                    // 風で回転も加える
+                    rotVelocities[i * 3 + 0] += vector.y * 0.3 * effect;
+                    rotVelocities[i * 3 + 1] += vector.x * 0.3 * effect;
+                }
+            }
+        }
+
+        function updateInstance(i) {
+            dummy.position.set(positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]);
+            dummy.rotation.set(rotations[i * 3 + 0], rotations[i * 3 + 1], rotations[i * 3 + 2]);
+            dummy.updateMatrix();
+            instancedMesh.setMatrixAt(i, dummy.matrix);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- アニメーションループ ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = Date.now() * 0.001;
+
+            // インジケーターを滑らかに手の位置へ移動
+            if (handIndicator && handIndicator.visible) {
+                handIndicator.position.lerp(targetHandPos, 0.2);
+                handIndicator.rotation.x += 0.01;
+                handIndicator.rotation.y += 0.02;
+            }
+
+            for (let i = 0; i < particleCount; i++) {
+                // 空気抵抗と重力（徐々に基本落下速度へ戻す）
+                velocities[i * 3 + 0] += (baseVelocities[i * 3 + 0] - velocities[i * 3 + 0]) * 0.02;
+                velocities[i * 3 + 1] += (baseVelocities[i * 3 + 1] - velocities[i * 3 + 1]) * 0.02;
+                velocities[i * 3 + 2] += (baseVelocities[i * 3 + 2] - velocities[i * 3 + 2]) * 0.02;
+
+                positions[i * 3 + 0] += velocities[i * 3 + 0] + Math.sin(time * 0.5 + phases[i]) * 0.015;
+                positions[i * 3 + 1] += velocities[i * 3 + 1];
+                positions[i * 3 + 2] += velocities[i * 3 + 2] + Math.cos(time * 0.5 + phases[i]) * 0.015;
+
+                rotations[i * 3 + 0] += rotVelocities[i * 3 + 0];
+                rotations[i * 3 + 1] += rotVelocities[i * 3 + 1];
+                rotations[i * 3 + 2] += rotVelocities[i * 3 + 2];
+
+                rotVelocities[i * 3 + 0] *= 0.95;
+                rotVelocities[i * 3 + 1] *= 0.95;
+                rotVelocities[i * 3 + 2] *= 0.95;
+
+                // 画面外リセット
+                if (positions[i * 3 + 1] < -30) {
+                    positions[i * 3 + 1] = 25 + Math.random() * 15;
+                    positions[i * 3 + 0] = (Math.random() - 0.5) * 80;
+                    positions[i * 3 + 2] = (Math.random() - 0.5) * 40 - 10;
+                    
+                    velocities[i * 3 + 0] = baseVelocities[i * 3 + 0];
+                    velocities[i * 3 + 1] = baseVelocities[i * 3 + 1];
+                    velocities[i * 3 + 2] = baseVelocities[i * 3 + 2];
+                }
+                
+                if (positions[i * 3 + 0] > 45) positions[i * 3 + 0] = -45;
+                if (positions[i * 3 + 0] < -45) positions[i * 3 + 0] = 45;
+
+                updateInstance(i);
+            }
+
+            instancedMesh.instanceMatrix.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
