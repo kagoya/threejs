@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Manga Speech Balloon - Auto Mic Start</title>
+  <title>Manga Speech Balloon - Auto Font Sizing</title>
   <style>
     body { margin: 0; overflow: hidden; background-color: #000; }
     #container { position: relative; width: 100vw; height: 100vh; }
@@ -37,9 +37,15 @@
       justify-content: center;
       transition: opacity 0.2s ease-in-out;
       opacity: 1;
+      overflow: hidden; /* はみ出し防止 */
     }
 
-    #speech-text { max-height: 100%; max-width: 100%; line-height: 1.5; word-break: break-word; }
+    /* テキスト配置用のスタイル */
+    #speech-text { 
+      line-height: 1.3; 
+      word-break: break-all;
+      text-align: center;
+    }
 
     .balloon.right-side { transform: translate(25%, -115%); }
     .balloon.right-side::before {
@@ -80,9 +86,31 @@
     const textElement = document.getElementById('speech-text');
     const statusPanel = document.getElementById('status-panel');
 
+    // ★吹き出しのサイズと文字数に合わせて文字サイズを自動計算・調整する関数
+    function adjustFontSize(text, balloonWidth, balloonHeight) {
+      if (!text) return;
+      const charCount = text.length;
+      
+      // 縦書きの内側有効エリア（楕円の余白を考慮）
+      const availHeight = balloonHeight * 0.75;
+      const availWidth = balloonWidth * 0.7;
+
+      // 初期の文字サイズ計算（顔の高さに対する倍率）
+      let fontSize = Math.max(14, balloonHeight * 0.12);
+
+      // 文字数が多い場合、高さを越えないように基本サイズを縮小
+      const estimatedHeightNeeded = charCount * fontSize;
+      if (estimatedHeightNeeded > availHeight * 2) {
+        fontSize = Math.max(12, availHeight / (charCount * 0.6));
+      }
+
+      balloonElement.style.fontSize = fontSize + 'px';
+    }
+
     // --- 音声認識 ---
     window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognitionActive = false;
+    let currentText = "（話しかけてください）";
 
     if (window.SpeechRecognition) {
       const recognition = new SpeechRecognition();
@@ -93,7 +121,6 @@
       recognition.onstart = () => { recognitionActive = true; };
       recognition.onend = () => { 
         recognitionActive = false; 
-        // 切れたら自動で再起動を試みる
         try { recognition.start(); } catch(e) {}
       };
       
@@ -104,23 +131,16 @@
         }
         
         if (transcript.trim() !== "") {
-          textElement.textContent = transcript;
+          currentText = transcript;
+          textElement.textContent = currentText;
         }
       };
       
-      // ★起動時に自動実行する関数
       function startMic() {
-        try {
-          recognition.start();
-        } catch(e) {
-          console.log("マイクの自動起動待ち");
-        }
+        try { recognition.start(); } catch(e) {}
       }
 
-      // 自動起動を試みる
       startMic();
-
-      // もしブラウザにブロックされた時の保険（クリックまたはキー入力で起動）
       window.addEventListener('click', startMic);
       window.addEventListener('keydown', startMic);
     } else {
@@ -136,7 +156,7 @@
     const HIDE_DELAY_MS = 1500; 
 
     faceMesh.onResults((results) => {
-      const micStatus = recognitionActive ? "🎤ON" : "🎤OFF (画面をクリックしてください)";
+      const micStatus = recognitionActive ? "🎤ON" : "🎤OFF (画面クリックで開始)";
 
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
@@ -152,12 +172,15 @@
 
         const faceHeight = Math.abs(landmarks[152].y - landmarks[10].y) * window.innerHeight;
         const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x) * window.innerWidth;
-        const balloonW = faceWidth * 1.3;
-        const balloonH = faceHeight * 1.4;
+        const balloonW = faceWidth * 1.35;
+        const balloonH = faceHeight * 1.45;
+        
         balloonElement.style.width = balloonW + 'px';
         balloonElement.style.height = balloonH + 'px';
-        balloonElement.style.padding = `${balloonH * 0.1}px ${balloonW * 0.15}px`;
-        balloonElement.style.fontSize = Math.max(16, faceHeight * 0.09) + 'px';
+        balloonElement.style.padding = `${balloonH * 0.12}px ${balloonW * 0.12}px`;
+
+        // ★文字数と吹き出しのサイズから文字サイズを自動調整
+        adjustFontSize(currentText, balloonW, balloonH);
 
         if (mouthX < window.innerWidth / 2) {
           balloonElement.className = 'balloon right-side';
