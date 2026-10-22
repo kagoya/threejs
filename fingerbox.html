@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Lightning FingerBox</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        /* 裏で動かすカメラ映像（ブラウザの停止を防ぐため透明にして配置） */
+        .input_video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0;       /* 完全に透明にする */
+            z-index: -1;      /* 邪魔にならないよう一番裏へ */
+            pointer-events: none;
+        }
+        /* Three.jsのキャンバス */
+        .output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+    </style>
+
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Three.js & Postprocessing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+</head>
+<body>
+    <video class="input_video" autoplay playsinline></video>
+    <canvas class="output_canvas"></canvas>
+
+    <script>
+        const videoElement = document.querySelector('.input_video');
+        const canvasElement = document.querySelector('.output_canvas');
+        
+        // ==========================================
+        // 1. Three.js の初期設定
+        // ==========================================
+        const scene = new THREE.Scene();
+        const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        // カメラ設定 (Z=100)
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+        camera.position.z = 100;
+
+        // 全体のかすかな環境光（稲妻がないときでも自分のシルエットがうっすら見える程度）
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); 
+        scene.add(ambientLight);
+
+        // ==========================================
+        // 2. カメラ映像を3D空間の「背景パネル」にする
+        // ==========================================
+        const videoTexture = new THREE.VideoTexture(videoElement);
+        videoTexture.wrapS = THREE.RepeatWrapping;
+        videoTexture.repeat.x = -1; // 鏡合わせ
+
+        const bgDist = 200; 
+        const bgHeight = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * bgDist;
+        const bgWidth = bgHeight * camera.aspect;
+
+        const bgGeometry = new THREE.PlaneGeometry(bgWidth, bgHeight);
+        const bgMaterial = new THREE.MeshStandardMaterial({ 
+            map: videoTexture, 
+            color: 0x888888, // 映像を少し暗めに設定（光が当たると明るくなる）
+            roughness: 0.9
+        });
+        const bgMesh = new THREE.Mesh(bgGeometry, bgMaterial);
+        bgMesh.position.z = -100;
+        scene.add(bgMesh);
+
+        // ==========================================
+        // 3. Bloom (光るエフェクト) の設定
+        // ==========================================
+        const renderScene = new THREE.RenderPass(scene, camera);
+        
+        // UnrealBloomPass(解像度, 発光の強さ, 半径, 閾値)
+        const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.3, 0.2);
+        
+        const composer = new THREE.EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // ==========================================
+        // 4. 稲妻 (Lightning) の生成ロジック
+        // ==========================================
+        let lightnings = [];
+        let frameCount = 0;
+
+        function generateJaggedPath(p1, p2, segments = 6) {
+            let points = [p1];
+            let dir = new THREE.Vector3().subVectors(p2, p1);
+            let len = dir.length();
+            
+            if (len < 0.1) return [p1, p2];
+
+            dir.normalize();
+            let up = new THREE.Vector3(0, 1, 0);
+            if (Math.abs(dir.y) > 0.9) up.set(1, 0, 0);
+            let perp1 = new THREE.Vector3().crossVectors(dir, up).normalize();
+            let perp2 = new THREE.Vector3().crossVectors(dir, perp1).normalize();
+
+            for (let i = 1; i < segments; i++) {
+                let t = i / segments;
+                let pos = new THREE.Vector3().lerpVectors(p1, p2, t);
+                
+                // ギザギザの振れ幅（線の長さの5%程度で四角形の形を維持）
+                let offsetMax = len * 0.05; 
+                let rAngle = Math.random() * Math.PI * 2;
+                let rDist = (Math.random() - 0.5) * offsetMax;
+                
+                let offsetDir = perp1.clone().multiplyScalar(Math.cos(rAngle))
+                                .add(perp2.clone().multiplyScalar(Math.sin(rAngle))).normalize();
+                
+                pos.add(offsetDir.multiplyScalar(rDist));
+                points.push(pos);
+            }
+            points.push(p2);
+            return points;
+        }
+
+        function createOrUpdateLightning(index, p1, p2) {
+            if (!lightnings[index]) {
+                const material = new THREE.MeshBasicMaterial({ color: 0x88ffff });
+                const geometry = new THREE.BufferGeometry();
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // 照り返すライトの届く距離（強すぎず周囲だけ照らす）
+                const light = new THREE.PointLight(0x00ffff, 0, 80);
+                
+                scene.add(mesh);
+                scene.add(light);
+                lightnings[index] = { mesh, light, active: false };
+            }
+
+            const bolt = lightnings[index];
+            bolt.active = true;
+            bolt.mesh.visible = true;
+
+            // 稲妻の形を更新（3フレームに1回でバチバチ感）
+            if (frameCount % 3 === 0) {
+                const points = generateJaggedPath(p1, p2, 6);
+                const curve = new THREE.CatmullRomCurve3(points);
+                curve.tension = 0;
+                
+                // チューブの太さ（0.6でシャープに）
+                const tubeGeometry = new THREE.TubeGeometry(curve, 10, 0.6, 5, false);
+                
+                bolt.mesh.geometry.dispose();
+                bolt.mesh.geometry = tubeGeometry;
+            }
+
+            // ライトの位置と強さの更新
+            bolt.light.position.copy(p1).lerp(p2, 0.5);
+            bolt.light.intensity = 1.0 + Math.random() * 1.5;
+        }
+
+        function hideAllLightnings() {
+            lightnings.forEach(bolt => {
+                if (bolt) {
+                    bolt.active = false;
+                    bolt.mesh.visible = false;
+                    bolt.light.intensity = 0; 
+                }
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            const newBgHeight = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * bgDist;
+            const newBgWidth = newBgHeight * camera.aspect;
+            bgMesh.geometry.dispose();
+            bgMesh.geometry = new THREE.PlaneGeometry(newBgWidth, newBgHeight);
+        });
+
+        // ==========================================
+        // 5. アニメーションループ
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+            frameCount++;
+            composer.render();
+        }
+        animate();
+
+        // ==========================================
+        // 6. MediaPipeから3D空間への変換
+        // ==========================================
+        function mapTo3D(landmark) {
+            const dist = camera.position.z;
+            const height = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * dist;
+            const width = height * camera.aspect;
+            
+            const x = (0.5 - landmark.x) * width;
+            const y = -(landmark.y - 0.5) * height;
+            const z = -landmark.z * width * 1.5;
+            
+            return new THREE.Vector3(x, y, z);
+        }
+
+        // ==========================================
+        // 7. 手の骨格認識処理
+        // ==========================================
+        function onResults(results) {
+            hideAllLightnings();
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hands = results.multiHandLandmarks;
+
+                if (hands.length === 1) {
+                    const thumb = mapTo3D(hands[0][4]);
+                    const index = mapTo3D(hands[0][8]);
+                    createOrUpdateLightning(0, thumb, index);
+                } 
+                else if (hands.length >= 2) {
+                    const thumb1 = mapTo3D(hands[0][4]);
+                    const index1 = mapTo3D(hands[0][8]);
+                    const thumb2 = mapTo3D(hands[1][4]);
+                    const index2 = mapTo3D(hands[1][8]);
+
+                    createOrUpdateLightning(0, thumb1, index1);
+                    createOrUpdateLightning(1, thumb2, index2);
+                    createOrUpdateLightning(2, thumb1, thumb2);
+                    createOrUpdateLightning(3, index1, index2);
+                }
+            }
+        }
+
+        // ==========================================
+        // 8. MediaPipe の初期化とカメラ起動
+        // ==========================================
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+        cameraUtils.start();
+    </script>
+</body>
+</html>
