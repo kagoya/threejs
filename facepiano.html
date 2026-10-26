@@ -1,722 +1,858 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Mouth Piano</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>おくちピアノ - facepiano</title>
+    
+    <!-- スマホ全画面・PWA用メタタグ -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="おくちピアノ">
+    <meta name="theme-color" content="#0f172a">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #111;
-            overflow: hidden;
-            font-family: 'Inter', sans-serif;
+        /* ピアノ全体のトランジション */
+        #piano-container {
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        /* Fullscreen container for webcam and overlays */
-        #video-wrapper {
-            position: fixed;
-            inset: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-            overflow: hidden;
-        }
-
-        /* Fullscreen mirrored webcam */
-        #webcam {
-            transform: scaleX(-1);
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            display: block;
-        }
-
-        /* Overlay canvas for graphics */
-        #output-canvas {
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            display: block;
-            pointer-events: none;
-            z-index: 20;
-        }
-
-        /* Piano positioned roughly 2/3 down from the top, height increased by 1.5x (22% -> 33%) */
-        #piano {
-            position: absolute;
-            top: 60%;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-            height: 33%;
-            min-height: 165px;
-            max-height: 345px;
-            display: flex;
-            opacity: 0.65;
-            backdrop-filter: blur(4px);
-            z-index: 10;
-            transition: width 0.25s ease;
-        }
-
+        /* 白鍵 */
         .white-key {
-            flex: 1;
-            background: linear-gradient(to bottom, #fff 0%, #eee 100%);
-            border: 1px solid #999;
-            border-bottom-left-radius: 6px;
-            border-bottom-right-radius: 6px;
-            position: relative;
-            box-shadow: inset 0 -4px 6px rgba(0,0,0,0.1);
-            transition: background 0.1s;
-            user-select: none;
-            touch-action: none;
+            background: linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(240,240,245,0.5) 85%, rgba(220,220,230,0.65) 100%);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.7);
+            border-bottom: 3px solid rgba(180,180,200,0.8);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+            transition: all 0.08s ease-out;
         }
 
-        .white-key.active { background: #b3d4ff; }
+        .white-key.active {
+            background: linear-gradient(180deg, rgba(254, 240, 138, 0.9) 0%, rgba(250, 204, 21, 0.8) 100%) !important;
+            border-bottom: 1px solid #ca8a04;
+            transform: translateY(3px);
+            box-shadow: 0 0 25px rgba(250, 204, 21, 0.8);
+        }
 
+        /* 黒鍵 通常 */
         .black-key {
-            position: absolute;
-            top: 0;
-            width: 55%; /* Black key is slightly wider than half of a white key */
-            height: 60%;
-            background: linear-gradient(to bottom, #333 0%, #000 100%);
-            left: 72.5%; /* Positioned overlapping the right edge */
-            z-index: 20;
-            border-bottom-left-radius: 4px;
-            border-bottom-right-radius: 4px;
-            box-shadow: 2px 2px 4px rgba(0,0,0,0.4), inset 0 -3px 5px rgba(255,255,255,0.2);
-            transition: background 0.1s, height 0.25s ease, opacity 0.25s ease, background-color 0.25s ease;
-            user-select: none;
-            touch-action: none;
+            background: linear-gradient(180deg, rgba(20,20,25,0.95) 0%, rgba(50,50,60,0.85) 100%);
+            border: 1px solid rgba(100,100,120,0.6);
+            border-bottom: 3px solid #000;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.6);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            pointer-events: auto;
         }
 
-        .black-key.active { background: #4a6fa5; }
-
-        /* 黒鍵「なし」のときは、場所のめやすとして短く・ごく薄く表示（判定は通過して下の白鍵が鳴る） */
-        #piano.hide-black .black-key {
-            height: 28%;
-            background: rgba(40, 45, 55, 0.22);
-            border: 1px solid rgba(0, 0, 0, 0.15);
-            box-shadow: inset 0 -1px 2px rgba(255, 255, 255, 0.15);
-            pointer-events: none;
+        .black-key.active {
+            background: linear-gradient(180deg, rgba(249, 115, 22, 0.95) 0%, rgba(234, 88, 12, 0.9) 100%) !important;
+            border-bottom: 1px solid #9a3412;
+            transform: translateY(2px);
+            box-shadow: 0 0 25px rgba(249, 115, 22, 0.9);
         }
 
-        #piano.hide-black .black-key.active {
-            background: rgba(40, 45, 55, 0.22);
+        /* 黒鍵なしモード時のガイド表示（薄く短く、タッチすり抜け） */
+        .hide-black-keys .black-key {
+            height: 28% !important;
+            background: rgba(100, 116, 139, 0.28) !important;
+            border: 1px dashed rgba(255, 255, 255, 0.35) !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
+            box-shadow: none !important;
+            backdrop-filter: blur(2px);
+            pointer-events: none !important;
         }
 
-        /* ドレミファソラシドの文字表示（薄く下部に配置） */
-        .key-label {
-            position: absolute;
-            bottom: 8px;
-            left: 0;
-            right: 0;
-            text-align: center;
-            font-size: clamp(10px, 2.2vw, 18px);
-            font-weight: 700;
-            color: rgba(70, 80, 95, 0.35);
-            pointer-events: none;
-            user-select: none;
+        /* ビデオの鏡像反転 */
+        .mirror-feed {
+            transform: scaleX(-1);
         }
 
+        /* セーフエリア対応（ノッチ付きスマホ） */
+        .safe-top {
+            padding-top: max(0.5rem, env(safe-area-inset-top));
+        }
+        .safe-right {
+            right: max(0.75rem, env(safe-area-inset-right));
+        }
     </style>
 </head>
-<body class="flex items-center justify-center">
+<body class="bg-slate-950 text-white w-screen h-screen overflow-hidden select-none touch-none">
 
-    <!-- Main Container -->
-    <div id="video-wrapper" class="rounded-xl overflow-hidden">
-        <!-- Webcam Feed -->
-        <video id="webcam" autoplay playsinline></video>
-        
-        <!-- Canvas for drawing mouth indicator -->
-        <canvas id="output-canvas" class="absolute inset-0 pointer-events-none z-20"></canvas>
-        
-        <!-- Piano Keyboard Settings UI -->
-        <div id="controls-panel" class="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-black/60 backdrop-blur-md px-4 py-2 rounded-2xl flex flex-wrap items-center justify-center gap-4 text-white text-xs sm:text-sm border border-white/15 shadow-xl select-none">
-            <!-- Width Options -->
-            <div class="flex items-center gap-1.5">
-                <span class="text-gray-300 font-medium">はば:</span>
-                <div class="inline-flex bg-white/10 rounded-lg p-0.5" id="width-btn-group">
-                    <button type="button" data-width="100%" class="width-btn px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition">ぜんぶ</button>
-                    <button type="button" data-width="50%" class="width-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">はんぶん</button>
-                    <button type="button" data-width="33.333%" class="width-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">1/3</button>
+    <!-- 画面全体のカメラ映像 -->
+    <video id="webcam" class="absolute inset-0 w-full h-full object-cover mirror-feed" autoplay playsinline muted></video>
+
+    <!-- AR描画レイヤー（唇やエフェクト：ピアノ鍵盤の手前に表示） -->
+    <canvas id="ar-canvas" class="absolute inset-0 w-full h-full pointer-events-none z-[25]"></canvas>
+
+    <!-- 画面右上：全画面切り替えボタン（常時アクセス可能） -->
+    <div class="fixed top-2 safe-right z-40 flex items-center gap-2">
+        <button id="fullscreen-btn" class="flex items-center gap-1.5 px-3 py-2 bg-slate-900/80 hover:bg-slate-800 text-white rounded-full backdrop-blur-md border border-white/20 shadow-lg text-xs font-bold transition active:scale-95">
+            <svg id="enter-fs-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+            <svg id="exit-fs-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 4v4H5M9 8L4 3m11 1v4h4m-4 0l5-5M9 20v-4H5m4 0l-5 5m11-1v-4h4m-4 0l5 5" />
+            </svg>
+            <span id="fs-btn-label">ぜんがめん</span>
+        </button>
+    </div>
+
+    <!-- 上部コントロールUI -->
+    <div class="fixed top-0 inset-x-0 z-30 pointer-events-none safe-top p-2 sm:p-3 flex justify-center">
+        <div class="pointer-events-auto bg-slate-900/80 backdrop-blur-md rounded-2xl border border-white/20 shadow-2xl px-3 py-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs mr-28 sm:mr-32">
+            
+            <!-- 幅の選択 -->
+            <div class="flex items-center gap-1">
+                <span class="text-slate-300 font-bold">はば:</span>
+                <div class="inline-flex rounded-lg bg-slate-800/90 p-0.5 border border-white/10">
+                    <button class="width-btn px-2 py-1 rounded-md transition text-slate-300 hover:text-white" data-width="full">ぜんぶ</button>
+                    <button class="width-btn px-2 py-1 rounded-md transition bg-indigo-600 text-white font-bold" data-width="half">はんぶん</button>
+                    <button class="width-btn px-2 py-1 rounded-md transition text-slate-300 hover:text-white" data-width="third">1/3</button>
                 </div>
             </div>
 
-            <!-- Black Keys Toggle -->
-            <div class="flex items-center gap-1.5">
-                <span class="text-gray-300 font-medium">くろい けん:</span>
-                <div class="inline-flex bg-white/10 rounded-lg p-0.5" id="black-keys-btn-group">
-                    <button type="button" id="btn-black-on" class="black-key-toggle-btn px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition">あり</button>
-                    <button type="button" id="btn-black-off" class="black-key-toggle-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">なし</button>
+            <!-- 黒鍵のあり/なし切り替え -->
+            <div class="flex items-center gap-1">
+                <span class="text-slate-300 font-bold">くろい けん:</span>
+                <div class="inline-flex rounded-lg bg-slate-800/90 p-0.5 border border-white/10">
+                    <button id="toggle-black-on" class="px-2 py-1 rounded-md bg-indigo-600 text-white font-bold transition">あり</button>
+                    <button id="toggle-black-off" class="px-2 py-1 rounded-md text-slate-300 hover:text-white transition">なし</button>
                 </div>
             </div>
 
-            <!-- Vertical Position Slider -->
-            <div class="flex items-center gap-2">
-                <span class="text-gray-300 font-medium whitespace-nowrap">たかさ:</span>
-                <input type="range" id="pos-slider" min="10" max="70" value="60" step="1" class="w-24 sm:w-32 accent-blue-500 cursor-pointer">
-                <span id="pos-label" class="text-gray-300 w-8 text-right font-mono">60%</span>
+            <!-- 縦位置スライダー -->
+            <div class="flex items-center gap-1.5">
+                <span class="text-slate-300 font-bold whitespace-nowrap">たかさ:</span>
+                <input id="position-slider" type="range" min="10" max="70" value="60" class="w-20 sm:w-28 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500">
             </div>
-        </div>
-
-        <!-- Piano Keyboard -->
-        <div id="piano"></div>
-        
-        <!-- Start Overlay -->
-        <div id="start-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/85 z-50 transition-opacity duration-500">
-            <h1 class="text-white text-3xl font-bold mb-4">おくちピアノ</h1>
-            <p class="text-gray-300 text-center max-w-md mb-8 px-4 leading-relaxed">
-                おくちを あけて、けんばんに かさねると おとが なるよ！<br>
-                おおきく あけるほど、おとも おおきくなるよ。<br>
-                ゆびで タップしても おとが なるよ！
-            </p>
-            <button id="start-btn" class="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-semibold text-lg shadow-[0_0_15px_rgba(37,99,235,0.5)] transition-all transform hover:scale-105">
-                スタート！
-            </button>
-            <p id="status-text" class="text-gray-400 mt-4 text-sm"></p>
         </div>
     </div>
 
-    <!-- ES Module script for logic -->
+    <!-- ピアノ鍵盤コンテナ -->
+    <div id="piano-wrapper" class="absolute inset-x-0 z-20 flex justify-center pointer-events-none transition-[top] duration-150 ease-out" style="top: 60%;">
+        <div id="piano-container" class="relative flex select-none pointer-events-auto h-[33vh] min-h-[165px] max-h-[345px] w-1/2">
+            <!-- 鍵盤はJavaScriptで動的に生成 -->
+        </div>
+    </div>
+
+    <!-- スタート画面・ローディング表示 -->
+    <div id="start-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4">
+        <div class="max-w-md w-full bg-slate-900 border border-slate-700 rounded-3xl p-6 text-center shadow-2xl space-y-5">
+            <div class="inline-flex p-3 rounded-2xl bg-indigo-500/20 text-indigo-400 mb-1">
+                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+            </div>
+            
+            <h1 class="text-2xl font-black tracking-tight text-white">おくちピアノ</h1>
+            
+            <div class="text-sm text-slate-300 space-y-2 text-left bg-slate-800/60 p-4 rounded-xl border border-slate-700">
+                <p class="font-bold text-indigo-400">あそびかた：</p>
+                <p>1. 画面のピアノに<b>お口をかさねて</b>みよう！</p>
+                <p>2. <b>お口をあけると</b>、ピアノのおとが鳴るよ。</p>
+                <p>3. お口を<b>大きくあけると大きい音</b>になるよ！</p>
+                <p>4. お友だちや家族と<b>みんなでいっしょに</b>ひけるよ。</p>
+            </div>
+
+            <!-- iOS Safari向けアドバイス -->
+            <div id="ios-hint" class="hidden text-xs text-amber-300/90 bg-amber-950/40 border border-amber-500/30 rounded-xl p-2.5 text-left">
+                💡 <b>iPhoneをご使用の方へ:</b> 下の「共有」ボタンから「ホーム画面に追加」すると、全画面アプリとして遊べます！
+            </div>
+
+            <div id="loading-spinner" class="py-2 flex flex-col items-center gap-2">
+                <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
+                <span id="loading-text" class="text-xs text-slate-300 font-medium">じゅんびちゅう...</span>
+            </div>
+
+            <!-- リトライボタン & カメラなしで遊ぶボタン（読み込みが遅い・失敗時の救済） -->
+            <div id="loading-fallbacks" class="hidden flex flex-col gap-2 pt-1">
+                <button id="retry-btn" class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-indigo-300 border border-indigo-500/30 transition">
+                    🔄 もういちど よみこむ
+                </button>
+                <button id="skip-cam-btn" class="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-xs text-slate-300 border border-white/10 transition">
+                    🎹 ゆびで あそぶ（カメラなし）
+                </button>
+            </div>
+
+            <button id="start-btn" disabled class="w-full py-3.5 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-base shadow-lg shadow-indigo-600/30 transition duration-150">
+                スタート！
+            </button>
+        </div>
+    </div>
+
+    <!-- メッセージ用トースト -->
+    <div id="toast" class="fixed bottom-6 inset-x-0 flex justify-center z-50 pointer-events-none opacity-0 transition-opacity duration-300">
+        <span id="toast-text" class="bg-slate-900/90 text-white text-xs font-bold px-4 py-2 rounded-full border border-white/20 shadow-xl backdrop-blur-sm"></span>
+    </div>
+
     <script type="module">
-        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+        import { FilesetResolver, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs";
 
-        // --- 1. Audio Engine Setup ---
-        let audioCtx;
+        // iOS判定
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        if (isIOS) {
+            document.getElementById('ios-hint')?.classList.remove('hidden');
+        }
 
-        class SynthNote {
-            constructor(ctx, midiNote, initialVolume) {
-                this.ctx = ctx;
-                this.oscillator = ctx.createOscillator();
-                this.envelopeGain = ctx.createGain(); // ADSR Envelope (Decay)
-                this.volumeGain = ctx.createGain();   // Mouth Openness Volume
+        /* ----------------------------------------------------
+           1. 全画面表示コントロール
+        ---------------------------------------------------- */
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const enterFsIcon = document.getElementById('enter-fs-icon');
+        const exitFsIcon = document.getElementById('exit-fs-icon');
+        const fsBtnLabel = document.getElementById('fs-btn-label');
 
-                // Calculate Frequency from MIDI
-                const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
-                this.oscillator.frequency.value = frequency;
-                this.oscillator.type = 'triangle'; // Soft piano-like tone
+        function isFullscreen() {
+            return Boolean(
+                document.fullscreenElement ||
+                document.webkitFullscreenElement ||
+                document.mozFullScreenElement ||
+                document.msFullscreenElement
+            );
+        }
 
-                // Connect graph: Osc -> Env -> Vol -> Destination
-                this.oscillator.connect(this.envelopeGain);
-                this.envelopeGain.connect(this.volumeGain);
-                this.volumeGain.connect(this.ctx.destination);
-
-                // Set initial mouth volume
-                this.volumeGain.gain.value = initialVolume;
-
-                // Setup Envelope (Attack & Decay)
-                const now = this.ctx.currentTime;
-                this.envelopeGain.gain.setValueAtTime(0, now);
-                this.envelopeGain.gain.linearRampToValueAtTime(1, now + 0.02); // Fast attack
-                // Decay exponentially over 2.5 seconds like a real struck string
-                this.envelopeGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.5);
-
-                this.oscillator.start();
-            }
-
-            setVolume(vol) {
-                // Smooth transition to prevent audio clicking
-                this.volumeGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05);
-            }
-
-            release() {
-                const now = this.ctx.currentTime;
-                this.envelopeGain.gain.cancelScheduledValues(now);
-                // Quick fade out on release
-                this.envelopeGain.gain.setValueAtTime(this.envelopeGain.gain.value, now);
-                this.envelopeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-                this.oscillator.stop(now + 0.15);
+        function updateFullscreenUI() {
+            const fs = isFullscreen();
+            if (fs) {
+                enterFsIcon.classList.add('hidden');
+                exitFsIcon.classList.remove('hidden');
+                fsBtnLabel.textContent = 'もどす';
+            } else {
+                enterFsIcon.classList.remove('hidden');
+                exitFsIcon.classList.add('hidden');
+                fsBtnLabel.textContent = 'ぜんがめん';
             }
         }
 
-        // --- 2. Generate Piano Layout ---
-        // 2 Octaves config (C4 to B5)
-        const keysConfig = [
-            { note: 60, name: 'ド', black: 61 }, { note: 62, name: 'レ', black: 63 }, { note: 64, name: 'ミ', black: null },
-            { note: 65, name: 'ファ', black: 66 }, { note: 67, name: 'ソ', black: 68 }, { note: 69, name: 'ラ', black: 70 }, { note: 71, name: 'シ', black: null },
-            { note: 72, name: 'ド', black: 73 }, { note: 74, name: 'レ', black: 75 }, { note: 76, name: 'ミ', black: null },
-            { note: 77, name: 'ファ', black: 78 }, { note: 79, name: 'ソ', black: 80 }, { note: 81, name: 'ラ', black: 82 }, { note: 83, name: 'シ', black: null }
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            const text = document.getElementById('toast-text');
+            text.textContent = msg;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => toast.classList.add('opacity-0'), 3500);
+        }
+
+        async function toggleFullscreen() {
+            try {
+                if (!isFullscreen()) {
+                    const docEl = document.documentElement;
+                    if (docEl.requestFullscreen) {
+                        await docEl.requestFullscreen();
+                    } else if (docEl.webkitRequestFullscreen) {
+                        await docEl.webkitRequestFullscreen();
+                    } else if (docEl.msRequestFullscreen) {
+                        await docEl.msRequestFullscreen();
+                    } else {
+                        // iOS Safariなどの未対応環境
+                        showToast('💡「ホームがめんに追加」すると、ぜんがめんであそべます！');
+                    }
+                } else {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        await document.webkitExitFullscreen();
+                    } else if (document.msExitFullscreen) {
+                        await document.msExitFullscreen();
+                    }
+                }
+            } catch (err) {
+                console.warn('Fullscreen Error:', err);
+                if (isIOS) {
+                    showToast('💡 iPhoneは共有から「ホームがめんに追加」してね');
+                }
+            }
+            updateFullscreenUI();
+        }
+
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+        document.addEventListener('fullscreenchange', updateFullscreenUI);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenUI);
+
+        /* ----------------------------------------------------
+           2. オーディオエンジン（Web Audio API）
+        ---------------------------------------------------- */
+        class AudioEngine {
+            constructor() {
+                this.ctx = null;
+                this.masterGain = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                    this.masterGain = this.ctx.createGain();
+                    this.masterGain.gain.value = 0.8;
+                    this.masterGain.connect(this.ctx.destination);
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playNote(freq, initialVolume = 0.5) {
+                if (!this.ctx) this.init();
+                const now = this.ctx.currentTime;
+
+                const osc = this.ctx.createOscillator();
+                osc.type = 'triangle'; // ピアノに近い丸みのある音
+                osc.frequency.setValueAtTime(freq, now);
+
+                // 音量調整ゲイン（口の開き具合に追従）
+                const volGain = this.ctx.createGain();
+                volGain.gain.setValueAtTime(Math.max(0.01, Math.min(1.0, initialVolume)), now);
+
+                // エンベロープゲイン（ピアノのようなアタックと自然減衰）
+                const envGain = this.ctx.createGain();
+                envGain.gain.setValueAtTime(0.001, now);
+                envGain.gain.exponentialRampToValueAtTime(1.0, now + 0.02);
+                envGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.0); // 3秒かけて自然減衰
+
+                osc.connect(volGain);
+                volGain.connect(envGain);
+                envGain.connect(this.masterGain);
+
+                osc.start(now);
+                osc.stop(now + 3.05);
+
+                return {
+                    osc,
+                    volGain,
+                    envGain,
+                    setVolume: (v) => {
+                        const targetV = Math.max(0.01, Math.min(1.0, v));
+                        volGain.gain.setTargetAtTime(targetV, this.ctx.currentTime, 0.04);
+                    },
+                    stop: () => {
+                        const stopTime = this.ctx.currentTime;
+                        envGain.gain.cancelScheduledValues(stopTime);
+                        envGain.gain.setTargetAtTime(0.0001, stopTime, 0.05);
+                        setTimeout(() => {
+                            try { osc.stop(); } catch (e) {}
+                        }, 100);
+                    }
+                };
+            }
+        }
+
+        const audio = new AudioEngine();
+
+        /* ----------------------------------------------------
+           3. 鍵盤データの定義（C4〜B5：2オクターブ）
+        ---------------------------------------------------- */
+        const NOTES = [
+            { note: "C4",  freq: 261.63, isBlack: false, solfege: "ド" },
+            { note: "C#4", freq: 277.18, isBlack: true  },
+            { note: "D4",  freq: 293.66, isBlack: false, solfege: "レ" },
+            { note: "D#4", freq: 311.13, isBlack: true  },
+            { note: "E4",  freq: 329.63, isBlack: false, solfege: "ミ" },
+            { note: "F4",  freq: 349.23, isBlack: false, solfege: "ファ" },
+            { note: "F#4", freq: 369.99, isBlack: true  },
+            { note: "G4",  freq: 392.00, isBlack: false, solfege: "ソ" },
+            { note: "G#4", freq: 415.30, isBlack: true  },
+            { note: "A4",  freq: 440.00, isBlack: false, solfege: "ラ" },
+            { note: "A#4", freq: 466.16, isBlack: true  },
+            { note: "B4",  freq: 493.88, isBlack: false, solfege: "シ" },
+            { note: "C5",  freq: 523.25, isBlack: false, solfege: "ド" },
+            { note: "C#5", freq: 554.37, isBlack: true  },
+            { note: "D5",  freq: 587.33, isBlack: false, solfege: "レ" },
+            { note: "D#5", freq: 622.25, isBlack: true  },
+            { note: "E5",  freq: 659.25, isBlack: false, solfege: "ミ" },
+            { note: "F5",  freq: 698.46, isBlack: false, solfege: "ファ" },
+            { note: "F#5", freq: 739.99, isBlack: true  },
+            { note: "G5",  freq: 783.99, isBlack: false, solfege: "ソ" },
+            { note: "G#5", freq: 830.61, isBlack: true  },
+            { note: "A5",  freq: 880.00, isBlack: false, solfege: "ラ" },
+            { note: "A#5", freq: 932.33, isBlack: true  },
+            { note: "B5",  freq: 987.77, isBlack: false, solfege: "シ" }
         ];
 
-        const pianoContainer = document.getElementById('piano');
-        keysConfig.forEach(k => {
-            const whiteKey = document.createElement('div');
-            whiteKey.className = 'white-key piano-key';
-            whiteKey.dataset.note = k.note;
+        const pianoContainer = document.getElementById('piano-container');
+        const whiteKeys = NOTES.filter(n => !n.isBlack);
+        const totalWhites = whiteKeys.length;
+        const keyElements = new Map();
 
-            // 薄く表示するドレミラベルの追加
-            const label = document.createElement('span');
-            label.className = 'key-label';
-            label.textContent = k.name;
-            whiteKey.appendChild(label);
+        // 鍵盤DOM生成
+        let whiteIndex = 0;
+        NOTES.forEach((n) => {
+            const key = document.createElement('div');
+            key.dataset.note = n.note;
+            key.dataset.freq = n.freq;
 
-            if (k.black) {
-                const blackKey = document.createElement('div');
-                blackKey.className = 'black-key piano-key';
-                blackKey.dataset.note = k.black;
-                whiteKey.appendChild(blackKey);
+            if (!n.isBlack) {
+                key.className = "white-key relative rounded-b-xl flex flex-col justify-end pb-2 items-center text-slate-600/70 select-none cursor-pointer";
+                key.style.width = `${100 / totalWhites}%`;
+                key.style.height = "100%";
+                key.innerHTML = `<span class="text-xs sm:text-sm font-black pointer-events-none tracking-tighter opacity-70">${n.solfege}</span>`;
+                pianoContainer.appendChild(key);
+                whiteIndex++;
+            } else {
+                key.className = "black-key absolute top-0 rounded-b-lg z-10 cursor-pointer";
+                key.style.width = `${(100 / totalWhites) * 0.65}%`;
+                key.style.height = "58%";
+                const leftPos = ((whiteIndex) * (100 / totalWhites)) - ((100 / totalWhites) * 0.325);
+                key.style.left = `${leftPos}%`;
+                pianoContainer.appendChild(key);
             }
-            pianoContainer.appendChild(whiteKey);
-        });
 
-        // Manual pointer events for piano interaction
-        const manualActiveKeys = new Set();
+            keyElements.set(n.note, key);
 
-        document.querySelectorAll('.piano-key').forEach(key => {
-            let manualNote = null;
-
-            const startManualPlay = (e) => {
+            // マウス/指タップでも演奏可能
+            let tapVoice = null;
+            const startPress = (e) => {
                 e.preventDefault();
-                e.stopPropagation(); // Prevent black key clicks bleeding to white keys
-                if (!audioCtx || manualNote) return;
-                const midi = parseInt(key.dataset.note);
-                manualNote = new SynthNote(audioCtx, midi, 1.0); // Full volume for manual hits
-                manualActiveKeys.add(key);
-                key.classList.add('active');
-            };
-
-            const stopManualPlay = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (manualNote) {
-                    manualNote.release();
-                    manualNote = null;
+                audio.init();
+                if (!tapVoice) {
+                    tapVoice = audio.playNote(n.freq, 0.85);
+                    key.classList.add('active');
                 }
-                manualActiveKeys.delete(key);
-                key.classList.remove('active');
+            };
+            const stopPress = (e) => {
+                e.preventDefault();
+                if (tapVoice) {
+                    tapVoice.stop();
+                    tapVoice = null;
+                }
+                updateKeyVisual(key);
             };
 
-            key.addEventListener('pointerdown', startManualPlay);
-            key.addEventListener('pointerup', stopManualPlay);
-            key.addEventListener('pointerleave', stopManualPlay);
-            key.addEventListener('pointercancel', stopManualPlay);
+            key.addEventListener('pointerdown', startPress);
+            key.addEventListener('pointerup', stopPress);
+            key.addEventListener('pointerleave', stopPress);
+            key.addEventListener('pointercancel', stopPress);
         });
 
-        // --- Keyboard Size & Position Controls ---
+        // 誰かが押している限りキーのハイライトを保持
+        function updateKeyVisual(keyEl) {
+            const note = keyEl.dataset.note;
+            let isUsedByFace = false;
+            for (const tracker of activeFaces.values()) {
+                if (tracker.currentNote === note) {
+                    isUsedByFace = true;
+                    break;
+                }
+            }
+            if (!isUsedByFace) {
+                keyEl.classList.remove('active');
+            }
+        }
+
+        /* ----------------------------------------------------
+           4. UIコントロール（幅、高さ、黒鍵）
+        ---------------------------------------------------- */
+        const positionSlider = document.getElementById('position-slider');
+        const pianoWrapper = document.getElementById('piano-wrapper');
+        positionSlider.addEventListener('input', (e) => {
+            pianoWrapper.style.top = `${e.target.value}%`;
+        });
+
         const widthButtons = document.querySelectorAll('.width-btn');
-        const posSlider = document.getElementById('pos-slider');
-        const posLabel = document.getElementById('pos-label');
+        const widthClasses = {
+            'full': ['w-full', 'px-2'],
+            'half': ['w-1/2'],
+            'third': ['w-1/3']
+        };
 
         widthButtons.forEach(btn => {
             btn.addEventListener('click', () => {
-                const w = btn.dataset.width;
-                pianoContainer.style.width = w;
-
                 widthButtons.forEach(b => {
-                    b.classList.remove('bg-blue-600', 'text-white');
-                    b.classList.add('text-gray-300');
+                    b.classList.remove('bg-indigo-600', 'text-white', 'font-bold');
+                    b.classList.add('text-slate-300');
                 });
-                btn.classList.add('bg-blue-600', 'text-white');
-                btn.classList.remove('text-gray-300');
+                btn.classList.add('bg-indigo-600', 'text-white', 'font-bold');
+                btn.classList.remove('text-slate-300');
+
+                const widthMode = btn.dataset.width;
+                pianoContainer.classList.remove('w-full', 'w-1/2', 'w-1/3', 'px-2');
+                pianoContainer.classList.add(...widthClasses[widthMode]);
             });
         });
 
-        posSlider.addEventListener('input', (e) => {
-            const val = e.target.value;
-            pianoContainer.style.top = `${val}%`;
-            posLabel.textContent = `${val}%`;
+        const toggleBlackOn = document.getElementById('toggle-black-on');
+        const toggleBlackOff = document.getElementById('toggle-black-off');
+
+        toggleBlackOn.addEventListener('click', () => {
+            pianoContainer.classList.remove('hide-black-keys');
+            toggleBlackOn.classList.add('bg-indigo-600', 'text-white', 'font-bold');
+            toggleBlackOn.classList.remove('text-slate-300');
+            toggleBlackOff.classList.remove('bg-indigo-600', 'text-white', 'font-bold');
+            toggleBlackOff.classList.add('text-slate-300');
         });
 
-        // --- Black Keys Toggle ---
-        const btnBlackOn = document.getElementById('btn-black-on');
-        const btnBlackOff = document.getElementById('btn-black-off');
+        toggleBlackOff.addEventListener('click', () => {
+            pianoContainer.classList.add('hide-black-keys');
+            toggleBlackOff.classList.add('bg-indigo-600', 'text-white', 'font-bold');
+            toggleBlackOff.classList.remove('text-slate-300');
+            toggleBlackOn.classList.remove('bg-indigo-600', 'text-white', 'font-bold');
+            toggleBlackOn.classList.add('text-slate-300');
 
-        function setBlackKeysVisible(visible) {
-            if (visible) {
-                pianoContainer.classList.remove('hide-black');
-                btnBlackOn.classList.add('bg-blue-600', 'text-white');
-                btnBlackOn.classList.remove('text-gray-300');
-                btnBlackOff.classList.remove('bg-blue-600', 'text-white');
-                btnBlackOff.classList.add('text-gray-300');
-            } else {
-                pianoContainer.classList.add('hide-black');
-                btnBlackOff.classList.add('bg-blue-600', 'text-white');
-                btnBlackOff.classList.remove('text-gray-300');
-                btnBlackOn.classList.remove('bg-blue-600', 'text-white');
-                btnBlackOn.classList.add('text-gray-300');
+            // 鳴っていた黒鍵を停止
+            for (const tracker of activeFaces.values()) {
+                if (tracker.currentNote && tracker.currentNote.includes('#')) {
+                    tracker.stopSound();
+                }
+            }
+        });
 
-                // もし黒鍵が鳴っていたら停止
-                mouthPlayers.forEach(p => {
-                    if (p.keyElement && p.keyElement.classList.contains('black-key')) {
-                        if (p.note) p.note.release();
-                        p.note = null;
-                        p.keyElement = null;
-                    }
-                });
-                document.querySelectorAll('.black-key').forEach(k => k.classList.remove('active'));
+        /* ----------------------------------------------------
+           5. MediaPipe Face Landmarker と ビデオ
+        ---------------------------------------------------- */
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('ar-canvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const startScreen = document.getElementById('start-screen');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const loadingText = document.getElementById('loading-text');
+        const loadingFallbacks = document.getElementById('loading-fallbacks');
+        const retryBtn = document.getElementById('retry-btn');
+        const skipCamBtn = document.getElementById('skip-cam-btn');
+
+        let faceLandmarker = null;
+        let runningMode = "VIDEO";
+        let lastVideoTime = -1;
+
+        async function initMediaPipe() {
+            loadingSpinner.classList.remove('hidden');
+            loadingFallbacks.classList.add('hidden');
+            startBtn.disabled = true;
+
+            try {
+                loadingText.textContent = "1/2: AIエンジンを よみこんでいます...";
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+
+                loadingText.textContent = "2/2: おかお認識モデルを じゅんび中...";
+                
+                // GPUを優先し、失敗した場合はCPUモードで起動
+                try {
+                    faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                            delegate: "GPU"
+                        },
+                        outputFaceBlendshapes: false,
+                        runningMode: runningMode,
+                        numFaces: 4
+                    });
+                } catch (gpuError) {
+                    console.warn("GPUモードの初期化に失敗したため、CPUモードで再試行します:", gpuError);
+                    loadingText.textContent = "あんぜんモード(CPU)で じゅんび中...";
+                    faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                        baseOptions: {
+                            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                            delegate: "CPU"
+                        },
+                        outputFaceBlendshapes: false,
+                        runningMode: runningMode,
+                        numFaces: 4
+                    });
+                }
+
+                loadingText.textContent = "じゅんび かんりょう！";
+                loadingSpinner.classList.add('hidden');
+                startBtn.disabled = false;
+                startBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            } catch (err) {
+                console.error("MediaPipe initialization failed:", err);
+                loadingSpinner.classList.add('hidden');
+                loadingText.innerHTML = `<span class="text-rose-400 font-bold">よみこみに じかんが かかっています</span><br><span class="text-slate-400">通信状態をご確認のうえ、もういちど試すか「ゆびであそぶ」をお選びください。</span>`;
+                loadingFallbacks.classList.remove('hidden');
             }
         }
 
-        btnBlackOn.addEventListener('click', () => setBlackKeysVisible(true));
-        btnBlackOff.addEventListener('click', () => setBlackKeysVisible(false));
+        // 初回ロード開始
+        initMediaPipe();
 
-        // --- 3. MediaPipe & Webcam Setup ---
-        const video = document.getElementById('webcam');
-        const canvas = document.getElementById('output-canvas');
-        const ctx = canvas.getContext('2d');
-        const videoWrapper = document.getElementById('video-wrapper');
-        const statusText = document.getElementById('status-text');
-        
-        let faceLandmarker;
-        let lastVideoTime = -1;
-        let isRunning = false;
+        // リトライボタン
+        retryBtn.addEventListener('click', () => {
+            initMediaPipe();
+        });
 
-        // Resize canvas to match screen dimensions
+        // カメラなし（指・マウス演奏モード）
+        skipCamBtn.addEventListener('click', () => {
+            audio.init();
+            startScreen.classList.add('hidden');
+            showToast('🎹 ゆびやマウスで鍵盤をタッチして演奏できます！');
+        });
+
+        startBtn.addEventListener('click', async () => {
+            audio.init();
+            startBtn.disabled = true;
+            loadingText.textContent = "カメラを つないでいます...";
+            loadingSpinner.classList.remove('hidden');
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: "user",
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+                video.srcObject = stream;
+                
+                // モバイル向けに確実に再生を開始
+                await video.play().catch(e => console.warn('video play warning:', e));
+
+                startScreen.classList.add('hidden');
+                resizeCanvas();
+                requestAnimationFrame(predictLoop);
+            } catch (err) {
+                console.error("Camera access failed:", err);
+                loadingSpinner.classList.add('hidden');
+                loadingText.innerHTML = `<span class="text-rose-400 font-bold">カメラが ひらけませんでした</span><br><span class="text-slate-400">ブラウザの設定でカメラを「きょか」するか、「ゆびであそぶ」をおためしください。</span>`;
+                loadingFallbacks.classList.remove('hidden');
+                startBtn.disabled = false;
+            }
+        });
+
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
         }
         window.addEventListener('resize', resizeCanvas);
 
-        // Convert normalized landmark (mirror-aware) to screen coordinates with object-fit: cover
+        // object-fit: cover に合わせた鏡像座標変換
         function getScreenCoords(normX, normY) {
             const screenW = window.innerWidth;
             const screenH = window.innerHeight;
-            const vidW = video.videoWidth || screenW;
-            const vidH = video.videoHeight || screenH;
+            const videoW = video.videoWidth || 1280;
+            const videoH = video.videoHeight || 720;
 
-            const screenRatio = screenW / screenH;
-            const vidRatio = vidW / vidH;
+            const screenAspect = screenW / screenH;
+            const videoAspect = videoW / videoH;
 
             let renderW, renderH, offsetX, offsetY;
-
-            if (screenRatio > vidRatio) {
+            if (screenAspect > videoAspect) {
                 renderW = screenW;
-                renderH = screenW / vidRatio;
+                renderH = screenW / videoAspect;
                 offsetX = 0;
                 offsetY = (screenH - renderH) / 2;
             } else {
                 renderH = screenH;
-                renderW = screenH * vidRatio;
+                renderW = screenH * videoAspect;
                 offsetX = (screenW - renderW) / 2;
                 offsetY = 0;
             }
 
-            // Invert X because camera feed is mirrored horizontally
+            // 水平反転（セルフィー視線）
             const mirroredX = 1 - normX;
             return {
-                x: offsetX + mirroredX * renderW,
-                y: offsetY + normY * renderH
+                x: offsetX + (mirroredX * renderW),
+                y: offsetY + (normY * renderH)
             };
         }
 
-        // Draw closed lips illustration
-        function drawClosedLips(ctx, cx, cy, scale = 1) {
-            ctx.save();
-            ctx.translate(cx, cy);
-            ctx.scale(scale, scale);
+        /* ----------------------------------------------------
+           6. マルチフェイス追跡 & 演奏ロジック
+        ---------------------------------------------------- */
+        class FaceMouthTracker {
+            constructor(id) {
+                this.id = id;
+                this.x = 0;
+                this.y = 0;
+                this.openRatio = 0;
+                this.isOpen = false;
+                this.currentNote = null;
+                this.activeVoice = null;
+                this.lastSeen = performance.now();
+            }
 
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-            ctx.shadowBlur = 8;
+            update(x, y, openRatio, isOpen) {
+                this.x = x;
+                this.y = y;
+                this.openRatio = openRatio;
+                this.isOpen = isOpen;
+                this.lastSeen = performance.now();
+                this.checkKeys();
+            }
 
-            // Upper Lip
-            ctx.beginPath();
-            ctx.moveTo(-18, 0);
-            ctx.bezierCurveTo(-11, -7, -4, -8, 0, -4);
-            ctx.bezierCurveTo(4, -8, 11, -7, 18, 0);
-            ctx.bezierCurveTo(9, 1.5, 0, 2, -18, 0);
-            ctx.fillStyle = '#ff4d6d';
-            ctx.fill();
-            ctx.strokeStyle = '#c9184a';
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
+            checkKeys() {
+                if (this.isOpen) {
+                    const el = document.elementFromPoint(this.x, this.y);
+                    const keyEl = el ? el.closest('.white-key, .black-key') : null;
 
-            // Lower Lip
-            ctx.beginPath();
-            ctx.moveTo(-18, 0);
-            ctx.bezierCurveTo(0, 2, 9, 1.5, 18, 0);
-            ctx.bezierCurveTo(11, 9, -11, 9, -18, 0);
-            ctx.fillStyle = '#ff758f';
-            ctx.fill();
-            ctx.strokeStyle = '#c9184a';
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
+                    if (keyEl) {
+                        const note = keyEl.dataset.note;
+                        const freq = parseFloat(keyEl.dataset.freq);
 
-            // Center parting line
-            ctx.beginPath();
-            ctx.moveTo(-16, 0);
-            ctx.quadraticCurveTo(0, 1.5, 16, 0);
-            ctx.strokeStyle = '#800f2f';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
+                        if (this.currentNote !== note) {
+                            this.stopSound();
+                            this.currentNote = note;
+                            keyEl.classList.add('active');
+                            this.activeVoice = audio.playNote(freq, this.openRatio);
+                        } else if (this.activeVoice) {
+                            this.activeVoice.setVolume(this.openRatio);
+                        }
+                    } else {
+                        this.stopSound();
+                    }
+                } else {
+                    this.stopSound();
+                }
+            }
 
-            // Lip gloss highlight
-            ctx.beginPath();
-            ctx.ellipse(0, 4.5, 5, 2, 0, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-            ctx.fill();
-
-            ctx.restore();
+            stopSound() {
+                if (this.activeVoice) {
+                    this.activeVoice.stop();
+                    this.activeVoice = null;
+                }
+                if (this.currentNote) {
+                    const keyEl = keyElements.get(this.currentNote);
+                    this.currentNote = null;
+                    if (keyEl) updateKeyVisual(keyEl);
+                }
+            }
         }
 
-        // Draw open lips illustration
-        function drawOpenLips(ctx, cx, cy, openness, scale = 1) {
+        const activeFaces = new Map();
+        let nextFaceId = 1;
+
+        /* ----------------------------------------------------
+           7. 唇グラフィックの描画
+        ---------------------------------------------------- */
+        function drawLips(ctx, x, y, openRatio, isOpen) {
             ctx.save();
-            ctx.translate(cx, cy);
+            ctx.translate(x, y);
+
+            const scale = 0.8 + (openRatio * 0.45);
             ctx.scale(scale, scale);
 
-            const gap = 6 + openness * 14;
-
-            // Radiant sound wave effect when open
-            if (openness > 0.05) {
-                ctx.strokeStyle = `rgba(96, 165, 250, ${0.35 + openness * 0.5})`;
-                ctx.lineWidth = 2.5;
+            if (isOpen) {
+                // 音波リングアニメーション
+                const pulse = (performance.now() % 1000) / 1000;
                 ctx.beginPath();
-                ctx.arc(0, 0, 24 + openness * 14, 0, Math.PI * 2);
+                ctx.ellipse(0, 0, 36 + pulse * 28, 22 + pulse * 22, 0, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(129, 140, 248, ${0.8 - pulse * 0.8})`;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // 開いた口の中
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 22, 14 * openRatio, 0, 0, Math.PI * 2);
+                ctx.fillStyle = "#450a0a";
+                ctx.fill();
+
+                // 上の歯
+                ctx.beginPath();
+                ctx.rect(-10, -12 * openRatio, 20, 5 * openRatio);
+                ctx.fillStyle = "#f8fafc";
+                ctx.fill();
+
+                // 唇の外周
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 25, 17 * openRatio, 0, 0, Math.PI * 2);
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = "#f43f5e";
+                ctx.stroke();
+            } else {
+                // 閉じた唇
+                ctx.beginPath();
+                ctx.moveTo(-20, 0);
+                ctx.quadraticCurveTo(-10, -5, 0, -3);
+                ctx.quadraticCurveTo(10, -5, 20, 0);
+                ctx.quadraticCurveTo(10, 8, 0, 7);
+                ctx.quadraticCurveTo(-10, 8, -20, 0);
+                ctx.fillStyle = "#fb7185";
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#e11d48";
+                ctx.stroke();
+
+                // 唇のライン
+                ctx.beginPath();
+                ctx.moveTo(-16, 0);
+                ctx.quadraticCurveTo(0, 2, 16, 0);
+                ctx.strokeStyle = "#be123c";
+                ctx.lineWidth = 1.5;
                 ctx.stroke();
             }
 
-            ctx.shadowColor = `rgba(255, 77, 109, ${0.5 + openness * 0.5})`;
-            ctx.shadowBlur = 10 + openness * 10;
-
-            // Mouth Cavity
-            ctx.beginPath();
-            ctx.moveTo(-18, -gap * 0.35);
-            ctx.bezierCurveTo(-9, -gap * 0.9, 9, -gap * 0.9, 18, -gap * 0.35);
-            ctx.bezierCurveTo(9, gap * 0.9, -9, gap * 0.9, -18, -gap * 0.35);
-            ctx.closePath();
-            ctx.fillStyle = '#4a0404';
-            ctx.fill();
-
-            // Upper teeth
-            ctx.beginPath();
-            ctx.moveTo(-10, -gap * 0.35);
-            ctx.bezierCurveTo(-5, -gap * 0.7, 5, -gap * 0.7, 10, -gap * 0.35);
-            ctx.lineTo(8, -gap * 0.1);
-            ctx.lineTo(-8, -gap * 0.1);
-            ctx.closePath();
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-
-            // Upper Lip
-            ctx.beginPath();
-            ctx.moveTo(-20, -gap * 0.3);
-            ctx.bezierCurveTo(-12, -gap * 0.7 - 7, -4, -gap * 0.7 - 8, 0, -gap * 0.7 - 4);
-            ctx.bezierCurveTo(4, -gap * 0.7 - 8, 12, -gap * 0.7 - 7, 20, -gap * 0.3);
-            ctx.bezierCurveTo(9, -gap * 0.85, -9, -gap * 0.85, -20, -gap * 0.3);
-            ctx.fillStyle = '#ff4d6d';
-            ctx.fill();
-            ctx.strokeStyle = '#c9184a';
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-
-            // Lower Lip
-            ctx.beginPath();
-            ctx.moveTo(-20, gap * 0.3);
-            ctx.bezierCurveTo(-9, gap * 0.8, 9, gap * 0.8, 20, gap * 0.3);
-            ctx.bezierCurveTo(12, gap * 0.7 + 8, -12, gap * 0.7 + 8, -20, gap * 0.3);
-            ctx.fillStyle = '#ff758f';
-            ctx.fill();
-            ctx.strokeStyle = '#c9184a';
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-
-            // Gloss
-            ctx.beginPath();
-            ctx.ellipse(0, gap * 0.55 + 3.5, 6, 2, 0, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-            ctx.fill();
-
             ctx.restore();
         }
 
-        // Multi-mouth tracking state
-        let mouthPlayers = []; // { id, x, y, note, keyElement }
-        let nextPlayerId = 1;
-
-        async function initMediaPipe() {
-            statusText.textContent = "じゅんびちゅう...";
-            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
-            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-                baseOptions: {
-                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-                    delegate: "GPU"
-                },
-                outputFaceBlendshapes: false,
-                runningMode: "VIDEO",
-                numFaces: 4 // Up to 4 faces simultaneously
-            });
-            statusText.textContent = "カメラを つないでいます...";
-        }
-
-        async function startApp() {
-            try {
-                const btn = document.getElementById('start-btn');
-                btn.disabled = true;
-
-                // Init Audio
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                await audioCtx.resume();
-
-                // Init MediaPipe
-                await initMediaPipe();
-
-                // Request Camera
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
-                video.srcObject = stream;
-
-                video.addEventListener('loadeddata', () => {
-                    resizeCanvas();
-                    document.getElementById('start-overlay').style.opacity = '0';
-                    setTimeout(() => document.getElementById('start-overlay').remove(), 500);
-                    
-                    isRunning = true;
-                    requestAnimationFrame(predictWebcam);
-                });
-            } catch (err) {
-                console.error(err);
-                statusText.textContent = "カメラを つかえるように「きょか」してね。";
-                document.getElementById('start-btn').disabled = false;
-            }
-        }
-
-        document.getElementById('start-btn').addEventListener('click', startApp);
-
-        // --- 4. Main Processing Loop ---
-        function predictWebcam() {
-            if (!isRunning) return;
-
-            if (lastVideoTime !== video.currentTime) {
+        /* ----------------------------------------------------
+           8. メイン予測ループ
+        ---------------------------------------------------- */
+        function predictLoop() {
+            if (video.currentTime !== lastVideoTime && faceLandmarker) {
                 lastVideoTime = video.currentTime;
-                const results = faceLandmarker.detectForVideo(video, performance.now());
-                processFace(results);
-            }
+                const startTimeMs = performance.now();
+                const results = faceLandmarker.detectForVideo(video, startTimeMs);
 
-            requestAnimationFrame(predictWebcam);
-        }
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        function processFace(results) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const currentDetections = [];
 
-            const detectedFaces = [];
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    for (const landmarks of results.faceLandmarks) {
+                        const topLip = landmarks[13];
+                        const bottomLip = landmarks[14];
+                        const mouthCenter = {
+                            x: (topLip.x + bottomLip.x) / 2,
+                            y: (topLip.y + bottomLip.y) / 2
+                        };
 
-            if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-                for (let i = 0; i < results.faceLandmarks.length; i++) {
-                    const landmarks = results.faceLandmarks[i];
-                    
-                    // Lip landmarks: 13=inner upper, 14=inner lower, 61=left corner, 291=right corner
-                    const upperLip = landmarks[13];
-                    const lowerLip = landmarks[14];
-                    const cornerLeft = landmarks[61];
-                    const cornerRight = landmarks[291];
+                        const mouthDist = Math.hypot(topLip.x - bottomLip.x, topLip.y - bottomLip.y);
+                        const faceTop = landmarks[10];
+                        const faceBottom = landmarks[152];
+                        const faceHeight = Math.hypot(faceTop.x - faceBottom.x, faceTop.y - faceBottom.y);
 
-                    // Mouth center
-                    const mouthX = (upperLip.x + lowerLip.x) / 2;
-                    const mouthY = (upperLip.y + lowerLip.y) / 2;
+                        // 開口度の計算（しきい値 0.05）
+                        const rawOpenRatio = mouthDist / (faceHeight || 1.0);
+                        const openRatio = Math.max(0, Math.min(1.0, (rawOpenRatio - 0.035) / 0.12));
+                        const isOpen = openRatio > 0.08;
 
-                    // Scale-invariant openness ratio using mouth width
-                    const mouthWidth = Math.hypot(cornerRight.x - cornerLeft.x, cornerRight.y - cornerLeft.y) || 0.1;
-                    const lipDist = Math.abs(lowerLip.y - upperLip.y);
-                    const openRatio = lipDist / mouthWidth;
-
-                    const OPEN_THRESHOLD = 0.08;
-                    const MAX_RATIO = 0.42;
-
-                    let openness = 0;
-                    if (openRatio > OPEN_THRESHOLD) {
-                        openness = Math.min(1, (openRatio - OPEN_THRESHOLD) / (MAX_RATIO - OPEN_THRESHOLD));
-                    }
-
-                    // Map mouth to fullscreen screen coordinates
-                    const { x: screenX, y: screenY } = getScreenCoords(mouthX, mouthY);
-
-                    // Render lip illustrations for each detected person
-                    if (openness <= 0) {
-                        drawClosedLips(ctx, screenX, screenY, 0.9);
-                    } else {
-                        drawOpenLips(ctx, screenX, screenY, openness, 0.9 + openness * 0.25);
-                    }
-
-                    detectedFaces.push({ screenX, screenY, openness });
-                }
-            }
-
-            // Match detected faces to persistent players by spatial proximity
-            const matchedPlayerIds = new Set();
-            const updatedPlayers = [];
-
-            detectedFaces.forEach(face => {
-                let bestPlayer = null;
-                let minDist = 250; // Maximum distance to consider as the same person across frames
-
-                for (const p of mouthPlayers) {
-                    if (matchedPlayerIds.has(p.id)) continue;
-                    const d = Math.hypot(p.x - face.screenX, p.y - face.screenY);
-                    if (d < minDist) {
-                        minDist = d;
-                        bestPlayer = p;
+                        const screenPos = getScreenCoords(mouthCenter.x, mouthCenter.y);
+                        currentDetections.push({
+                            x: screenPos.x,
+                            y: screenPos.y,
+                            openRatio,
+                            isOpen
+                        });
                     }
                 }
 
-                // Collision detection with piano keys
-                const hitElement = document.elementFromPoint(face.screenX, face.screenY);
-                const hitKey = hitElement ? hitElement.closest('.piano-key') : null;
+                // 複数人の位置追跡トラッキング
+                const matchedTrackers = new Set();
+                for (const det of currentDetections) {
+                    let bestTracker = null;
+                    let minDist = 180; // ピクセル範囲
 
-                if (bestPlayer) {
-                    matchedPlayerIds.add(bestPlayer.id);
-                    bestPlayer.x = face.screenX;
-                    bestPlayer.y = face.screenY;
-
-                    if (face.openness > 0 && hitKey) {
-                        const midi = parseInt(hitKey.dataset.note);
-                        if (bestPlayer.keyElement !== hitKey) {
-                            if (bestPlayer.note) bestPlayer.note.release();
-                            bestPlayer.note = new SynthNote(audioCtx, midi, face.openness);
-                            bestPlayer.keyElement = hitKey;
-                        } else {
-                            // Update volume as openness changes
-                            bestPlayer.note.setVolume(face.openness);
-                        }
-                    } else {
-                        if (bestPlayer.note) {
-                            bestPlayer.note.release();
-                            bestPlayer.note = null;
-                            bestPlayer.keyElement = null;
+                    for (const [id, tracker] of activeFaces.entries()) {
+                        if (matchedTrackers.has(id)) continue;
+                        const dist = Math.hypot(tracker.x - det.x, tracker.y - det.y);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            bestTracker = tracker;
                         }
                     }
-                    updatedPlayers.push(bestPlayer);
-                } else {
-                    // New person detected
-                    const newPlayer = {
-                        id: nextPlayerId++,
-                        x: face.screenX,
-                        y: face.screenY,
-                        note: null,
-                        keyElement: null
-                    };
 
-                    if (face.openness > 0 && hitKey) {
-                        const midi = parseInt(hitKey.dataset.note);
-                        newPlayer.note = new SynthNote(audioCtx, midi, face.openness);
-                        newPlayer.keyElement = hitKey;
+                    if (!bestTracker) {
+                        bestTracker = new FaceMouthTracker(nextFaceId++);
+                        activeFaces.set(bestTracker.id, bestTracker);
                     }
-                    updatedPlayers.push(newPlayer);
-                }
-            });
 
-            // Stop notes for players who left the camera view
-            mouthPlayers.forEach(p => {
-                if (!matchedPlayerIds.has(p.id) && p.note) {
-                    p.note.release();
+                    matchedTrackers.add(bestTracker.id);
+                    bestTracker.update(det.x, det.y, det.openRatio, det.isOpen);
+                    drawLips(ctx, det.x, det.y, det.openRatio, det.isOpen);
                 }
-            });
 
-            mouthPlayers = updatedPlayers;
-
-            // Sync visual active states of piano keys across all mouth and touch players
-            const mouthActiveKeys = new Set(mouthPlayers.filter(p => p.keyElement).map(p => p.keyElement));
-            document.querySelectorAll('.piano-key').forEach(key => {
-                if (mouthActiveKeys.has(key) || manualActiveKeys.has(key)) {
-                    key.classList.add('active');
-                } else {
-                    key.classList.remove('active');
+                // 画面から消えた顔のインスタンスをクリーンアップ
+                for (const [id, tracker] of activeFaces.entries()) {
+                    if (!matchedTrackers.has(id)) {
+                        tracker.stopSound();
+                        activeFaces.delete(id);
+                    }
                 }
-            });
+            }
+
+            requestAnimationFrame(predictLoop);
         }
     </script>
 </body>
