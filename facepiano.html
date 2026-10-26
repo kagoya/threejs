@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Mouth Piano</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #111;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Fullscreen container for webcam and overlays */
+        #video-wrapper {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            overflow: hidden;
+        }
+
+        /* Fullscreen mirrored webcam */
+        #webcam {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Overlay canvas for graphics */
+        #output-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        /* Piano positioned roughly 2/3 down from the top, height increased by 1.5x (22% -> 33%) */
+        #piano {
+            position: absolute;
+            top: 60%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            height: 33%;
+            min-height: 165px;
+            max-height: 345px;
+            display: flex;
+            opacity: 0.65;
+            backdrop-filter: blur(4px);
+            z-index: 10;
+            transition: width 0.25s ease;
+        }
+
+        .white-key {
+            flex: 1;
+            background: linear-gradient(to bottom, #fff 0%, #eee 100%);
+            border: 1px solid #999;
+            border-bottom-left-radius: 6px;
+            border-bottom-right-radius: 6px;
+            position: relative;
+            box-shadow: inset 0 -4px 6px rgba(0,0,0,0.1);
+            transition: background 0.1s;
+            user-select: none;
+            touch-action: none;
+        }
+
+        .white-key.active { background: #b3d4ff; }
+
+        .black-key {
+            position: absolute;
+            top: 0;
+            width: 55%; /* Black key is slightly wider than half of a white key */
+            height: 60%;
+            background: linear-gradient(to bottom, #333 0%, #000 100%);
+            left: 72.5%; /* Positioned overlapping the right edge */
+            z-index: 20;
+            border-bottom-left-radius: 4px;
+            border-bottom-right-radius: 4px;
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.4), inset 0 -3px 5px rgba(255,255,255,0.2);
+            transition: background 0.1s, height 0.25s ease, opacity 0.25s ease, background-color 0.25s ease;
+            user-select: none;
+            touch-action: none;
+        }
+
+        .black-key.active { background: #4a6fa5; }
+
+        /* 黒鍵「なし」のときは、場所のめやすとして短く・ごく薄く表示（判定は通過して下の白鍵が鳴る） */
+        #piano.hide-black .black-key {
+            height: 28%;
+            background: rgba(40, 45, 55, 0.22);
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            box-shadow: inset 0 -1px 2px rgba(255, 255, 255, 0.15);
+            pointer-events: none;
+        }
+
+        #piano.hide-black .black-key.active {
+            background: rgba(40, 45, 55, 0.22);
+        }
+
+        /* ドレミファソラシドの文字表示（薄く下部に配置） */
+        .key-label {
+            position: absolute;
+            bottom: 8px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: clamp(10px, 2.2vw, 18px);
+            font-weight: 700;
+            color: rgba(70, 80, 95, 0.35);
+            pointer-events: none;
+            user-select: none;
+        }
+
+    </style>
+</head>
+<body class="flex items-center justify-center">
+
+    <!-- Main Container -->
+    <div id="video-wrapper" class="rounded-xl overflow-hidden">
+        <!-- Webcam Feed -->
+        <video id="webcam" autoplay playsinline></video>
+        
+        <!-- Canvas for drawing mouth indicator -->
+        <canvas id="output-canvas" class="absolute inset-0 pointer-events-none z-20"></canvas>
+        
+        <!-- Piano Keyboard Settings UI -->
+        <div id="controls-panel" class="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-black/60 backdrop-blur-md px-4 py-2 rounded-2xl flex flex-wrap items-center justify-center gap-4 text-white text-xs sm:text-sm border border-white/15 shadow-xl select-none">
+            <!-- Width Options -->
+            <div class="flex items-center gap-1.5">
+                <span class="text-gray-300 font-medium">はば:</span>
+                <div class="inline-flex bg-white/10 rounded-lg p-0.5" id="width-btn-group">
+                    <button type="button" data-width="100%" class="width-btn px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition">ぜんぶ</button>
+                    <button type="button" data-width="50%" class="width-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">はんぶん</button>
+                    <button type="button" data-width="33.333%" class="width-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">1/3</button>
+                </div>
+            </div>
+
+            <!-- Black Keys Toggle -->
+            <div class="flex items-center gap-1.5">
+                <span class="text-gray-300 font-medium">くろい けん:</span>
+                <div class="inline-flex bg-white/10 rounded-lg p-0.5" id="black-keys-btn-group">
+                    <button type="button" id="btn-black-on" class="black-key-toggle-btn px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition">あり</button>
+                    <button type="button" id="btn-black-off" class="black-key-toggle-btn px-2.5 py-1 rounded-md text-gray-300 hover:text-white transition">なし</button>
+                </div>
+            </div>
+
+            <!-- Vertical Position Slider -->
+            <div class="flex items-center gap-2">
+                <span class="text-gray-300 font-medium whitespace-nowrap">たかさ:</span>
+                <input type="range" id="pos-slider" min="10" max="70" value="60" step="1" class="w-24 sm:w-32 accent-blue-500 cursor-pointer">
+                <span id="pos-label" class="text-gray-300 w-8 text-right font-mono">60%</span>
+            </div>
+        </div>
+
+        <!-- Piano Keyboard -->
+        <div id="piano"></div>
+        
+        <!-- Start Overlay -->
+        <div id="start-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/85 z-50 transition-opacity duration-500">
+            <h1 class="text-white text-3xl font-bold mb-4">おくちピアノ</h1>
+            <p class="text-gray-300 text-center max-w-md mb-8 px-4 leading-relaxed">
+                おくちを あけて、けんばんに かさねると おとが なるよ！<br>
+                おおきく あけるほど、おとも おおきくなるよ。<br>
+                ゆびで タップしても おとが なるよ！
+            </p>
+            <button id="start-btn" class="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-semibold text-lg shadow-[0_0_15px_rgba(37,99,235,0.5)] transition-all transform hover:scale-105">
+                スタート！
+            </button>
+            <p id="status-text" class="text-gray-400 mt-4 text-sm"></p>
+        </div>
+    </div>
+
+    <!-- ES Module script for logic -->
+    <script type="module">
+        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+        // --- 1. Audio Engine Setup ---
+        let audioCtx;
+
+        class SynthNote {
+            constructor(ctx, midiNote, initialVolume) {
+                this.ctx = ctx;
+                this.oscillator = ctx.createOscillator();
+                this.envelopeGain = ctx.createGain(); // ADSR Envelope (Decay)
+                this.volumeGain = ctx.createGain();   // Mouth Openness Volume
+
+                // Calculate Frequency from MIDI
+                const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
+                this.oscillator.frequency.value = frequency;
+                this.oscillator.type = 'triangle'; // Soft piano-like tone
+
+                // Connect graph: Osc -> Env -> Vol -> Destination
+                this.oscillator.connect(this.envelopeGain);
+                this.envelopeGain.connect(this.volumeGain);
+                this.volumeGain.connect(this.ctx.destination);
+
+                // Set initial mouth volume
+                this.volumeGain.gain.value = initialVolume;
+
+                // Setup Envelope (Attack & Decay)
+                const now = this.ctx.currentTime;
+                this.envelopeGain.gain.setValueAtTime(0, now);
+                this.envelopeGain.gain.linearRampToValueAtTime(1, now + 0.02); // Fast attack
+                // Decay exponentially over 2.5 seconds like a real struck string
+                this.envelopeGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.5);
+
+                this.oscillator.start();
+            }
+
+            setVolume(vol) {
+                // Smooth transition to prevent audio clicking
+                this.volumeGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05);
+            }
+
+            release() {
+                const now = this.ctx.currentTime;
+                this.envelopeGain.gain.cancelScheduledValues(now);
+                // Quick fade out on release
+                this.envelopeGain.gain.setValueAtTime(this.envelopeGain.gain.value, now);
+                this.envelopeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+                this.oscillator.stop(now + 0.15);
+            }
+        }
+
+        // --- 2. Generate Piano Layout ---
+        // 2 Octaves config (C4 to B5)
+        const keysConfig = [
+            { note: 60, name: 'ド', black: 61 }, { note: 62, name: 'レ', black: 63 }, { note: 64, name: 'ミ', black: null },
+            { note: 65, name: 'ファ', black: 66 }, { note: 67, name: 'ソ', black: 68 }, { note: 69, name: 'ラ', black: 70 }, { note: 71, name: 'シ', black: null },
+            { note: 72, name: 'ド', black: 73 }, { note: 74, name: 'レ', black: 75 }, { note: 76, name: 'ミ', black: null },
+            { note: 77, name: 'ファ', black: 78 }, { note: 79, name: 'ソ', black: 80 }, { note: 81, name: 'ラ', black: 82 }, { note: 83, name: 'シ', black: null }
+        ];
+
+        const pianoContainer = document.getElementById('piano');
+        keysConfig.forEach(k => {
+            const whiteKey = document.createElement('div');
+            whiteKey.className = 'white-key piano-key';
+            whiteKey.dataset.note = k.note;
+
+            // 薄く表示するドレミラベルの追加
+            const label = document.createElement('span');
+            label.className = 'key-label';
+            label.textContent = k.name;
+            whiteKey.appendChild(label);
+
+            if (k.black) {
+                const blackKey = document.createElement('div');
+                blackKey.className = 'black-key piano-key';
+                blackKey.dataset.note = k.black;
+                whiteKey.appendChild(blackKey);
+            }
+            pianoContainer.appendChild(whiteKey);
+        });
+
+        // Manual pointer events for piano interaction
+        const manualActiveKeys = new Set();
+
+        document.querySelectorAll('.piano-key').forEach(key => {
+            let manualNote = null;
+
+            const startManualPlay = (e) => {
+                e.preventDefault();
+                e.stopPropagation(); // Prevent black key clicks bleeding to white keys
+                if (!audioCtx || manualNote) return;
+                const midi = parseInt(key.dataset.note);
+                manualNote = new SynthNote(audioCtx, midi, 1.0); // Full volume for manual hits
+                manualActiveKeys.add(key);
+                key.classList.add('active');
+            };
+
+            const stopManualPlay = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (manualNote) {
+                    manualNote.release();
+                    manualNote = null;
+                }
+                manualActiveKeys.delete(key);
+                key.classList.remove('active');
+            };
+
+            key.addEventListener('pointerdown', startManualPlay);
+            key.addEventListener('pointerup', stopManualPlay);
+            key.addEventListener('pointerleave', stopManualPlay);
+            key.addEventListener('pointercancel', stopManualPlay);
+        });
+
+        // --- Keyboard Size & Position Controls ---
+        const widthButtons = document.querySelectorAll('.width-btn');
+        const posSlider = document.getElementById('pos-slider');
+        const posLabel = document.getElementById('pos-label');
+
+        widthButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const w = btn.dataset.width;
+                pianoContainer.style.width = w;
+
+                widthButtons.forEach(b => {
+                    b.classList.remove('bg-blue-600', 'text-white');
+                    b.classList.add('text-gray-300');
+                });
+                btn.classList.add('bg-blue-600', 'text-white');
+                btn.classList.remove('text-gray-300');
+            });
+        });
+
+        posSlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            pianoContainer.style.top = `${val}%`;
+            posLabel.textContent = `${val}%`;
+        });
+
+        // --- Black Keys Toggle ---
+        const btnBlackOn = document.getElementById('btn-black-on');
+        const btnBlackOff = document.getElementById('btn-black-off');
+
+        function setBlackKeysVisible(visible) {
+            if (visible) {
+                pianoContainer.classList.remove('hide-black');
+                btnBlackOn.classList.add('bg-blue-600', 'text-white');
+                btnBlackOn.classList.remove('text-gray-300');
+                btnBlackOff.classList.remove('bg-blue-600', 'text-white');
+                btnBlackOff.classList.add('text-gray-300');
+            } else {
+                pianoContainer.classList.add('hide-black');
+                btnBlackOff.classList.add('bg-blue-600', 'text-white');
+                btnBlackOff.classList.remove('text-gray-300');
+                btnBlackOn.classList.remove('bg-blue-600', 'text-white');
+                btnBlackOn.classList.add('text-gray-300');
+
+                // もし黒鍵が鳴っていたら停止
+                mouthPlayers.forEach(p => {
+                    if (p.keyElement && p.keyElement.classList.contains('black-key')) {
+                        if (p.note) p.note.release();
+                        p.note = null;
+                        p.keyElement = null;
+                    }
+                });
+                document.querySelectorAll('.black-key').forEach(k => k.classList.remove('active'));
+            }
+        }
+
+        btnBlackOn.addEventListener('click', () => setBlackKeysVisible(true));
+        btnBlackOff.addEventListener('click', () => setBlackKeysVisible(false));
+
+        // --- 3. MediaPipe & Webcam Setup ---
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('output-canvas');
+        const ctx = canvas.getContext('2d');
+        const videoWrapper = document.getElementById('video-wrapper');
+        const statusText = document.getElementById('status-text');
+        
+        let faceLandmarker;
+        let lastVideoTime = -1;
+        let isRunning = false;
+
+        // Resize canvas to match screen dimensions
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // Convert normalized landmark (mirror-aware) to screen coordinates with object-fit: cover
+        function getScreenCoords(normX, normY) {
+            const screenW = window.innerWidth;
+            const screenH = window.innerHeight;
+            const vidW = video.videoWidth || screenW;
+            const vidH = video.videoHeight || screenH;
+
+            const screenRatio = screenW / screenH;
+            const vidRatio = vidW / vidH;
+
+            let renderW, renderH, offsetX, offsetY;
+
+            if (screenRatio > vidRatio) {
+                renderW = screenW;
+                renderH = screenW / vidRatio;
+                offsetX = 0;
+                offsetY = (screenH - renderH) / 2;
+            } else {
+                renderH = screenH;
+                renderW = screenH * vidRatio;
+                offsetX = (screenW - renderW) / 2;
+                offsetY = 0;
+            }
+
+            // Invert X because camera feed is mirrored horizontally
+            const mirroredX = 1 - normX;
+            return {
+                x: offsetX + mirroredX * renderW,
+                y: offsetY + normY * renderH
+            };
+        }
+
+        // Draw closed lips illustration
+        function drawClosedLips(ctx, cx, cy, scale = 1) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(scale, scale);
+
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+            ctx.shadowBlur = 8;
+
+            // Upper Lip
+            ctx.beginPath();
+            ctx.moveTo(-18, 0);
+            ctx.bezierCurveTo(-11, -7, -4, -8, 0, -4);
+            ctx.bezierCurveTo(4, -8, 11, -7, 18, 0);
+            ctx.bezierCurveTo(9, 1.5, 0, 2, -18, 0);
+            ctx.fillStyle = '#ff4d6d';
+            ctx.fill();
+            ctx.strokeStyle = '#c9184a';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            // Lower Lip
+            ctx.beginPath();
+            ctx.moveTo(-18, 0);
+            ctx.bezierCurveTo(0, 2, 9, 1.5, 18, 0);
+            ctx.bezierCurveTo(11, 9, -11, 9, -18, 0);
+            ctx.fillStyle = '#ff758f';
+            ctx.fill();
+            ctx.strokeStyle = '#c9184a';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            // Center parting line
+            ctx.beginPath();
+            ctx.moveTo(-16, 0);
+            ctx.quadraticCurveTo(0, 1.5, 16, 0);
+            ctx.strokeStyle = '#800f2f';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Lip gloss highlight
+            ctx.beginPath();
+            ctx.ellipse(0, 4.5, 5, 2, 0, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw open lips illustration
+        function drawOpenLips(ctx, cx, cy, openness, scale = 1) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(scale, scale);
+
+            const gap = 6 + openness * 14;
+
+            // Radiant sound wave effect when open
+            if (openness > 0.05) {
+                ctx.strokeStyle = `rgba(96, 165, 250, ${0.35 + openness * 0.5})`;
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(0, 0, 24 + openness * 14, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.shadowColor = `rgba(255, 77, 109, ${0.5 + openness * 0.5})`;
+            ctx.shadowBlur = 10 + openness * 10;
+
+            // Mouth Cavity
+            ctx.beginPath();
+            ctx.moveTo(-18, -gap * 0.35);
+            ctx.bezierCurveTo(-9, -gap * 0.9, 9, -gap * 0.9, 18, -gap * 0.35);
+            ctx.bezierCurveTo(9, gap * 0.9, -9, gap * 0.9, -18, -gap * 0.35);
+            ctx.closePath();
+            ctx.fillStyle = '#4a0404';
+            ctx.fill();
+
+            // Upper teeth
+            ctx.beginPath();
+            ctx.moveTo(-10, -gap * 0.35);
+            ctx.bezierCurveTo(-5, -gap * 0.7, 5, -gap * 0.7, 10, -gap * 0.35);
+            ctx.lineTo(8, -gap * 0.1);
+            ctx.lineTo(-8, -gap * 0.1);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            // Upper Lip
+            ctx.beginPath();
+            ctx.moveTo(-20, -gap * 0.3);
+            ctx.bezierCurveTo(-12, -gap * 0.7 - 7, -4, -gap * 0.7 - 8, 0, -gap * 0.7 - 4);
+            ctx.bezierCurveTo(4, -gap * 0.7 - 8, 12, -gap * 0.7 - 7, 20, -gap * 0.3);
+            ctx.bezierCurveTo(9, -gap * 0.85, -9, -gap * 0.85, -20, -gap * 0.3);
+            ctx.fillStyle = '#ff4d6d';
+            ctx.fill();
+            ctx.strokeStyle = '#c9184a';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            // Lower Lip
+            ctx.beginPath();
+            ctx.moveTo(-20, gap * 0.3);
+            ctx.bezierCurveTo(-9, gap * 0.8, 9, gap * 0.8, 20, gap * 0.3);
+            ctx.bezierCurveTo(12, gap * 0.7 + 8, -12, gap * 0.7 + 8, -20, gap * 0.3);
+            ctx.fillStyle = '#ff758f';
+            ctx.fill();
+            ctx.strokeStyle = '#c9184a';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            // Gloss
+            ctx.beginPath();
+            ctx.ellipse(0, gap * 0.55 + 3.5, 6, 2, 0, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Multi-mouth tracking state
+        let mouthPlayers = []; // { id, x, y, note, keyElement }
+        let nextPlayerId = 1;
+
+        async function initMediaPipe() {
+            statusText.textContent = "じゅんびちゅう...";
+            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                    delegate: "GPU"
+                },
+                outputFaceBlendshapes: false,
+                runningMode: "VIDEO",
+                numFaces: 4 // Up to 4 faces simultaneously
+            });
+            statusText.textContent = "カメラを つないでいます...";
+        }
+
+        async function startApp() {
+            try {
+                const btn = document.getElementById('start-btn');
+                btn.disabled = true;
+
+                // Init Audio
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                await audioCtx.resume();
+
+                // Init MediaPipe
+                await initMediaPipe();
+
+                // Request Camera
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+                video.srcObject = stream;
+
+                video.addEventListener('loadeddata', () => {
+                    resizeCanvas();
+                    document.getElementById('start-overlay').style.opacity = '0';
+                    setTimeout(() => document.getElementById('start-overlay').remove(), 500);
+                    
+                    isRunning = true;
+                    requestAnimationFrame(predictWebcam);
+                });
+            } catch (err) {
+                console.error(err);
+                statusText.textContent = "カメラを つかえるように「きょか」してね。";
+                document.getElementById('start-btn').disabled = false;
+            }
+        }
+
+        document.getElementById('start-btn').addEventListener('click', startApp);
+
+        // --- 4. Main Processing Loop ---
+        function predictWebcam() {
+            if (!isRunning) return;
+
+            if (lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                const results = faceLandmarker.detectForVideo(video, performance.now());
+                processFace(results);
+            }
+
+            requestAnimationFrame(predictWebcam);
+        }
+
+        function processFace(results) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const detectedFaces = [];
+
+            if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                for (let i = 0; i < results.faceLandmarks.length; i++) {
+                    const landmarks = results.faceLandmarks[i];
+                    
+                    // Lip landmarks: 13=inner upper, 14=inner lower, 61=left corner, 291=right corner
+                    const upperLip = landmarks[13];
+                    const lowerLip = landmarks[14];
+                    const cornerLeft = landmarks[61];
+                    const cornerRight = landmarks[291];
+
+                    // Mouth center
+                    const mouthX = (upperLip.x + lowerLip.x) / 2;
+                    const mouthY = (upperLip.y + lowerLip.y) / 2;
+
+                    // Scale-invariant openness ratio using mouth width
+                    const mouthWidth = Math.hypot(cornerRight.x - cornerLeft.x, cornerRight.y - cornerLeft.y) || 0.1;
+                    const lipDist = Math.abs(lowerLip.y - upperLip.y);
+                    const openRatio = lipDist / mouthWidth;
+
+                    const OPEN_THRESHOLD = 0.08;
+                    const MAX_RATIO = 0.42;
+
+                    let openness = 0;
+                    if (openRatio > OPEN_THRESHOLD) {
+                        openness = Math.min(1, (openRatio - OPEN_THRESHOLD) / (MAX_RATIO - OPEN_THRESHOLD));
+                    }
+
+                    // Map mouth to fullscreen screen coordinates
+                    const { x: screenX, y: screenY } = getScreenCoords(mouthX, mouthY);
+
+                    // Render lip illustrations for each detected person
+                    if (openness <= 0) {
+                        drawClosedLips(ctx, screenX, screenY, 0.9);
+                    } else {
+                        drawOpenLips(ctx, screenX, screenY, openness, 0.9 + openness * 0.25);
+                    }
+
+                    detectedFaces.push({ screenX, screenY, openness });
+                }
+            }
+
+            // Match detected faces to persistent players by spatial proximity
+            const matchedPlayerIds = new Set();
+            const updatedPlayers = [];
+
+            detectedFaces.forEach(face => {
+                let bestPlayer = null;
+                let minDist = 250; // Maximum distance to consider as the same person across frames
+
+                for (const p of mouthPlayers) {
+                    if (matchedPlayerIds.has(p.id)) continue;
+                    const d = Math.hypot(p.x - face.screenX, p.y - face.screenY);
+                    if (d < minDist) {
+                        minDist = d;
+                        bestPlayer = p;
+                    }
+                }
+
+                // Collision detection with piano keys
+                const hitElement = document.elementFromPoint(face.screenX, face.screenY);
+                const hitKey = hitElement ? hitElement.closest('.piano-key') : null;
+
+                if (bestPlayer) {
+                    matchedPlayerIds.add(bestPlayer.id);
+                    bestPlayer.x = face.screenX;
+                    bestPlayer.y = face.screenY;
+
+                    if (face.openness > 0 && hitKey) {
+                        const midi = parseInt(hitKey.dataset.note);
+                        if (bestPlayer.keyElement !== hitKey) {
+                            if (bestPlayer.note) bestPlayer.note.release();
+                            bestPlayer.note = new SynthNote(audioCtx, midi, face.openness);
+                            bestPlayer.keyElement = hitKey;
+                        } else {
+                            // Update volume as openness changes
+                            bestPlayer.note.setVolume(face.openness);
+                        }
+                    } else {
+                        if (bestPlayer.note) {
+                            bestPlayer.note.release();
+                            bestPlayer.note = null;
+                            bestPlayer.keyElement = null;
+                        }
+                    }
+                    updatedPlayers.push(bestPlayer);
+                } else {
+                    // New person detected
+                    const newPlayer = {
+                        id: nextPlayerId++,
+                        x: face.screenX,
+                        y: face.screenY,
+                        note: null,
+                        keyElement: null
+                    };
+
+                    if (face.openness > 0 && hitKey) {
+                        const midi = parseInt(hitKey.dataset.note);
+                        newPlayer.note = new SynthNote(audioCtx, midi, face.openness);
+                        newPlayer.keyElement = hitKey;
+                    }
+                    updatedPlayers.push(newPlayer);
+                }
+            });
+
+            // Stop notes for players who left the camera view
+            mouthPlayers.forEach(p => {
+                if (!matchedPlayerIds.has(p.id) && p.note) {
+                    p.note.release();
+                }
+            });
+
+            mouthPlayers = updatedPlayers;
+
+            // Sync visual active states of piano keys across all mouth and touch players
+            const mouthActiveKeys = new Set(mouthPlayers.filter(p => p.keyElement).map(p => p.keyElement));
+            document.querySelectorAll('.piano-key').forEach(key => {
+                if (mouthActiveKeys.has(key) || manualActiveKeys.has(key)) {
+                    key.classList.add('active');
+                } else {
+                    key.classList.remove('active');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
